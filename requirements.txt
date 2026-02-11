@@ -1,0 +1,4 @@
+# Terminal requirements
+kalshi-python-async>=3.6.0
+textual>=7.0.0
+python-dotenv>=1.0.0
