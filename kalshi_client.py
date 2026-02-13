@@ -4,6 +4,9 @@ import asyncio
 import logging
 import random
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv() # Load variables from .env
 try:
     import kalshi_python_async
     from kalshi_python_async import Configuration, ApiClient, MarketApi, ExchangeApi
@@ -92,6 +95,11 @@ class KalshiClient:
 
             self.market_api = MarketApi(self.api_client)
             self.exchange_api = ExchangeApi(self.api_client)
+            try:
+                from kalshi_python_async import SearchApi
+                self.search_api = SearchApi(self.api_client)
+            except ImportError:
+                self.search_api = None
 
     async def login(self):
         if self.use_mock:
@@ -108,11 +116,11 @@ class KalshiClient:
             # Login logic would go here if implemented
             pass
         
-    async def get_active_markets(self, limit=20, cursor=None):
+    async def get_active_markets(self, limit=20, cursor=None, series_ticker=None, event_ticker=None):
         if self.use_mock:
             # Generate fake markets
             markets = []
-            categories = ["Politics", "Economics", "Weather", "Tech"]
+            categories = ["Politics", "Economics", "Weather", "Tech", "Sports"]
             for i in range(limit):
                 cat = random.choice(categories)
                 price = random.uniform(0.10, 0.90)
@@ -127,7 +135,10 @@ class KalshiClient:
         try:
             response = await self.market_api.get_markets(
                 limit=limit,
-                cursor=cursor
+                cursor=cursor,
+                series_ticker=series_ticker,
+                event_ticker=event_ticker,
+                status='open'
             )
             return response.markets
         except Exception as e:
@@ -145,8 +156,91 @@ class KalshiClient:
              })
 
         try:
-            response = await self.market_api.get_market_orderbook(ticker)
-            return response.orderbook
+            # Bypass Pydantic validation by getting raw response
+            api_response = await self.market_api.get_market_orderbook_without_preload_content(ticker=ticker)
+            data = await api_response.json()
+            
+            # Important: Close the response
+            api_response.close()
+            
+            ob_data = data.get('orderbook', {})
+            
+            # Helper to safely get bid/ask from the first level of the orderbook
+            # Kalshi orderbook response usually has 'yes' and 'no' lists of [price, quantity]
+            yes_bids = ob_data.get('yes', [])
+            no_bids = ob_data.get('no', [])
+            
+            # Simple fallback to return an object with bid/ask prices
+            # Note: Prices are in cents/points in the raw JSON
+            return type('obj', (object,), {
+                 'yes_bid': yes_bids[0][0]/100 if yes_bids else 0,
+                 'yes_ask': (100 - no_bids[0][0])/100 if no_bids else 0,
+                 'no_bid': no_bids[0][0]/100 if no_bids else 0,
+                 'no_ask': (100 - yes_bids[0][0])/100 if yes_bids else 0
+            })
         except Exception as e:
             logger.error(f"Error fetching orderbook for {ticker}: {e}")
             return None
+
+    async def get_market_trades(self, ticker: str, limit: int = 100):
+        if self.use_mock:
+            trades = []
+            for _ in range(limit):
+                price = random.uniform(0.30, 0.70)
+                trades.append(type('obj', (object,), {
+                    'yes_price': round(price, 2),
+                    'no_price': round(1-price, 2),
+                    'count': random.randint(1, 10),
+                    'taker_side': random.choice(['yes', 'no']),
+                    'created_time': datetime.now().isoformat()
+                }))
+            return trades
+
+        try:
+            # SDK might have 'ticker' as a keyword or positional. 
+            # Looking at the trace, it seems it might be get_trades(ticker=ticker, limit=limit)
+            response = await self.market_api.get_trades(ticker=ticker, limit=limit)
+            return response.trades
+        except Exception as e:
+            logger.error(f"Error fetching trades for {ticker}: {e}")
+            return []
+
+    async def get_market_candlesticks(self, ticker: str, start_time: int, end_time: int, period: int = 60):
+        """
+        Period in minutes: 1, 60, 1440
+        start_time and end_time as unix timestamps
+        """
+        if self.use_mock:
+            candles = []
+            current = start_time
+            while current < end_time:
+                price = random.uniform(0.30, 0.70)
+                candles.append(type('obj', (object,), {
+                    'open': round(price, 2),
+                    'high': round(price + 0.05, 2),
+                    'low': round(price - 0.05, 2),
+                    'close': round(price + 0.01, 2),
+                    'volume': random.randint(100, 1000),
+                    'start_period_ts': current
+                }))
+                current += period * 60
+            return candles
+
+        try:
+            response = await self.market_api.get_market_candlesticks(
+                ticker, 
+                start_ts=start_time, 
+                end_ts=end_time, 
+                period_interval=period
+            )
+            return response.candlesticks
+        except Exception as e:
+            logger.error(f"Error fetching candlesticks for {ticker}: {e}")
+            return []
+
+    async def close(self):
+        if not self.use_mock and hasattr(self, 'api_client'):
+            try:
+                await self.api_client.close()
+            except Exception:
+                pass
