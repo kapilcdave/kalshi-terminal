@@ -1,78 +1,55 @@
-# ⚡ Kalshi Live Terminal
+# ⚡ Antigravity Terminal (Bloomberg Edition)
 
-A sleek, real-time terminal dashboard for monitoring [Kalshi](https://kalshi.com) prediction markets. Built with [Textual](https://textual.textualize.io/) for a rich TUI experience.
+A professional-grade, real-time terminal dashboard for monitoring **Kalshi** and **Polymarket** prediction markets. Built for professional traders with a focus on cross-platform arbitrage.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-Production%20Ready-success)
 
 ## Features
 
-- **Live Market Data** — Streams active Kalshi markets with bid/ask prices and volume
-- **Market Detail View** — Select any market to see price sparklines and stats
-- **Keyboard Navigation** — Arrow keys to browse, `R` to refresh, `Q` to quit
-- **Mock Mode** — Runs with simulated data if no API credentials are provided
-- **Secure Auth** — RSA key-based authentication (no passwords stored)
+- **Multi-Platform Monitoring** — Side-by-side view of Kalshi (USD) and Polymarket (USDC) events.
+- **Bloomberg-Style UI** — High-contrast, professional-grade TUI with sub-panels and state monitoring.
+- **Arbitrage Engine** — Integrated fuzzy-matching and spread calculation between platforms.
+- **Secure Integration** — Supports Kalshi RSA authentication and Polymarket REST APIs.
+- **Mock Mode** — Automatic fallback to simulated data if no credentials are found.
 
 ## Quick Start
 
-### 1. Clone & Install
+### 1. Install Dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/kalshi-terminal.git
-cd kalshi-terminal
-python -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Keys
-
-Generate an API key from your [Kalshi Dashboard](https://kalshi.com/account/details).
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Edit `.env` with your Kalshi credentials. Polymarket public data works out of the box.
 
-```env
-KALSHI_API_KEY=your_api_key_id
-KALSHI_PRIVATE_KEY_FILE=./your_private_key.pem
-KALSHI_ENV=demo
-```
-
-### 3. Run
+### 3. Run the Terminal
 
 ```bash
 python terminal_app.py
 ```
 
-> **No API key?** The app will start in **mock mode** with simulated market data so you can preview the UI.
-
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| `↑` `↓` | Navigate markets |
-| `Enter` | Select market (updates detail view) |
-| `R` | Refresh market list |
-| `Q` | Quit |
+| `↑` `↓` | Navigate market lists |
+| `R` | Refresh all data sources |
+| `A` | Toggle Arbitrage Scanner details |
+| `Q` | Quit terminal |
 
 ## Project Structure
 
-```
-├── terminal_app.py      # Main TUI application (Textual)
-├── kalshi_client.py     # Kalshi API wrapper with RSA auth
-├── requirements.txt     # Python dependencies
-├── .env.example         # Template for environment variables
-└── .gitignore           # Git ignore rules
-```
-
-## Tech Stack
-
-- **[Textual](https://textual.textualize.io/)** — Modern Python TUI framework
-- **[kalshi-python-async](https://pypi.org/project/kalshi-python-async/)** — Official async Kalshi SDK
-- **[python-dotenv](https://pypi.org/project/python-dotenv/)** — Environment variable management
+- `terminal_app.py`: Main Bloomberg-style TUI.
+- `kalshi_client.py`: Kalshi API interface (RSA/Demo/Prod).
+- `polymarket_client.py`: Modern Polymarket Gamma & CLOB interface.
+- `arb_engine.py`: Logic for market matching and arbitrage logic.
 
 ## License
 
