@@ -1,226 +1,187 @@
 
-from dotenv import load_dotenv
-load_dotenv()
 
+import os
+import asyncio
+import random
+from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, Grid
-from textual.widgets import Header, Footer, DataTable, Static, Label, Digits, Sparkline, TabbedContent, TabPane
+from textual.widgets import Header, Footer, DataTable, Static, Label, Digits, Sparkline, TabbedContent, TabPane, Input
 from textual.reactive import reactive
 from textual.binding import Binding
-import random
-import asyncio
-from kalshi_client import KalshiClient
 
-class MarketDetail(Static):
-    """Displays details for the selected market."""
-    current_market = reactive(None)
-    price_history = reactive([0.5] * 60) # Default flat line
+from kalshi_client import KalshiClient
+from polymarket_client import PolymarketClient
+from arb_engine import ArbEngine
+
+load_dotenv()
+
+class BloombergHeader(Static):
+    """A custom professional header."""
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="bbg-header"):
+            yield Label("ANTIGRAVITY TERMINAL", id="app-title")
+            yield Label(" | ", classes="separator")
+            yield Label("PRO EDITION v1.0", id="app-subtitle")
+            yield Label("", id="clock")
+
+class MarketPane(Vertical):
+    """A pane displaying markets for a specific platform."""
+    def __init__(self, title, platform_name, **kwargs):
+        super().__init__(**kwargs)
+        self.pane_title = title
+        self.platform = platform_name
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="detail-inner"):
-            yield Label("SELECT A MARKET", id="market-title")
-            
-            with Horizontal(id="price-container"):
-                with Vertical(classes="price-box bid-box"):
-                    yield Label("BID", classes="price-label")
-                    yield Digits("00", id="yes-bid", classes="price-digit")
-                
-                with Vertical(classes="spark-container"):
-                    yield Label("PRICE HISTORY (1H)", classes="chart-label")
-                    yield Sparkline(self.price_history, summary_function=max)
-                
-                with Vertical(classes="price-box ask-box"):
-                    yield Label("ASK", classes="price-label")
-                    yield Digits("00", id="yes-ask", classes="price-digit")
-            
-            yield Label("VOLUME: --   OI: --", id="market-stats")
+        yield Label(self.pane_title, classes="pane-header")
+        yield DataTable(id=f"{self.platform}-table")
 
-    def watch_current_market(self, market):
-        if market:
-            self.query_one("#market-title").update(f"{market.title}")
-            self.update_price(market)
-            # Simulate history based on current price
-            # In real app, fetch candles
-            base = getattr(market, 'yes_bid', 0.5) or 0.5
-            self.price_history = [max(0.01, min(0.99, base + random.uniform(-0.05, 0.05))) for _ in range(60)]
-            self.query_one(Sparkline).data = self.price_history
-            
-            vol = getattr(market, 'volume', 0)
-            oi = getattr(market, 'open_interest', 0)
-            self.query_one("#market-stats").update(f"VOLUME: {vol:,}   OI: {oi:,}")
-
-    def update_price(self, market):
-         if hasattr(market, 'yes_bid'):
-            bid = int(market.yes_bid * 100)
-            ask = int(market.yes_ask * 100)
-            self.query_one("#yes-bid").update(f"{bid}")
-            self.query_one("#yes-ask").update(f"{ask}")
-
-class KalshiTerminal(App):
+class KalshiPolymarketTerminal(App):
     CSS = """
     Screen {
-        layout: vertical;
-        background: #121212;
+        background: #000000;
+        color: #00FFFF;
+        font-family: "Courier New", monospace;
     }
-    
-    Header {
-        background: #0d47a1;
-        color: white;
+
+    #bbg-header {
+        height: 1;
+        background: #000080;
+        color: #FFFFFF;
+        padding: 0 1;
+    }
+
+    #app-title { text-style: bold; color: #00FFFF; }
+    .separator { color: #555555; }
+    #app-subtitle { color: #AAAAAA; }
+
+    .pane-header {
+        background: #222222;
+        color: #FFA500;
+        padding: 0 1;
         text-style: bold;
+        border-bottom: solid #444444;
     }
-    
+
     DataTable {
         height: 1fr;
-        border: solid #333333;
-        background: #1e1e1e;
+        background: #000000;
+        color: #00FF00;
+        border: none;
     }
-    
-    DataTable > .datatable--header {
-        text-style: bold;
-        background: #263238;
-        color: #cfd8dc;
-    }
-    
-    DataTable > .datatable--cursor {
-        background: #0d47a1;
-        color: white;
-    }
-    
-    #market-detail-container {
-        height: 20;
-        border-top: heavy #00e676;
-        background: #1e1e1e;
-        padding: 1;
-    }
-    
-    #market-title {
-        text-align: center;
-        text-style: bold;
-        color: #00e676;
-        margin-bottom: 1;
-        width: 100%;
-        background: #263238;
-        padding: 1;
-    }
-    
-    #price-container {
-        align: center middle;
-        height: 10;
-        margin-bottom: 1;
-    }
-    
-    .price-box {
-        width: 20;
-        height: 100%;
-        align: center middle;
-        border: heavy #444444;
-        margin: 0 1;
-        background: #212121;
-    }
-    
-    
-    .bid-box { border: heavy #00e676; }
-    .ask-box { border: heavy #ff1744; }
 
-    
-    .price-label { color: #888888; margin-bottom: 1; }
-    .price-digit { color: white; }
-    
-    .spark-container {
-        width: 40;
-        height: 100%;
-        margin: 0 2;
-        align: center middle;
+    DataTable > .datatable--header {
+        background: #111111;
+        color: #00FFFF;
+        text-style: bold;
     }
-    
-    Sparkline {
-        width: 100%;
-        height: 5;
-        color: #00e676;
+
+    DataTable > .datatable--cursor {
+        background: #333333;
+        color: #FFFFFF;
     }
-    
-    .chart-label {
-        color: #555555;
-        margin-bottom: 1;
+
+    #main-container {
+        layout: grid;
+        grid-size: 2;
+        grid-columns: 1fr 1fr;
     }
-    
-    #market-stats {
-        text-align: center;
-        color: #90a4ae;
+
+    #arb-pane {
+        height: 8;
+        background: #001100;
+        border-top: double #00FF00;
+        padding: 0 1;
+    }
+
+    .arb-header { color: #00FF00; text-style: bold; }
+    .arb-item { color: #FFFFFF; }
+    .profitable { color: #00FF00; text-style: bold; }
+
+    Footer {
+        background: #000080;
+        color: #FFFFFF;
     }
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh Markets")
+        Binding("r", "refresh", "Refresh All"),
+        Binding("a", "toggle_arb", "Arb Monitor"),
     ]
 
     def __init__(self):
         super().__init__()
-        self.client = KalshiClient()
-        self.markets = {} 
+        self.kalshi = KalshiClient()
+        self.poly = PolymarketClient()
+        self.arb = ArbEngine(self.kalshi, self.poly)
+        self.k_markets = {}
+        self.p_markets = {}
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True, icon="⚡")
-        yield DataTable(id="market-table")
-        yield Container(MarketDetail(id="market-detail"), id="market-detail-container")
+        yield BloombergHeader()
+        with Container(id="main-container"):
+            yield MarketPane("KALSHI MARKETS (USD)", "kalshi")
+            yield MarketPane("POLYMARKET (USDC)", "poly")
+        with Vertical(id="arb-pane"):
+            yield Label("ACTIVE ARBITRAGE SCANNER", classes="arb-header")
+            yield Static("Scanning for opportunities...", id="arb-status")
         yield Footer()
 
     async def on_mount(self) -> None:
-        table = self.query_one(DataTable)
-        table.cursor_type = "row"
-        table.add_columns("Ticker", "Title", "Vol", "Bid", "Ask")
-        
-        # Initial load
-        await self.client.login()
+        # Setup Tables
+        k_table = self.query_one("#kalshi-table", DataTable)
+        k_table.add_columns("Ticker", "Price", "Vol")
+        k_table.cursor_type = "row"
+
+        p_table = self.query_one("#poly-table", DataTable)
+        p_table.add_columns("Market", "Price", "Vol")
+        p_table.cursor_type = "row"
+
+        await self.kalshi.login()
         await self.action_refresh()
 
     async def action_refresh(self) -> None:
-        table = self.query_one(DataTable)
-        
-        # Save cursor position if any
-        cursor_row = table.cursor_row
-        
+        await asyncio.gather(
+            self.refresh_kalshi(),
+            self.refresh_poly()
+        )
+        self.update_arb_status()
+
+    async def refresh_kalshi(self):
+        table = self.query_one("#kalshi-table", DataTable)
         table.clear()
-        
-        # Fetch markets
-        market_list = await self.client.get_active_markets(limit=50) # Increased limit
-        self.markets = {m.ticker: m for m in market_list}
-        
-        rows = []
-        for m in market_list:
-            vol = getattr(m, 'volume', 0) or 0
-            bid = getattr(m, 'yes_bid', 0.0) or 0.0
-            ask = getattr(m, 'yes_ask', 0.0) or 0.0
-            
-            rows.append((
-                m.ticker,
-                m.title,
-                str(vol),
-                f"{bid:.2f}",
-                f"{ask:.2f}"
-            ))
-            
-        table.add_rows(rows)
-        
-        # Restore cursor if possible
-        if cursor_row is not None and cursor_row < len(rows):
-             table.move_cursor(row=cursor_row)
+        markets = await self.kalshi.get_active_markets(limit=20)
+        self.k_markets = {m.ticker: m for m in markets}
+        for m in markets:
+            bid = getattr(m, 'yes_bid', 0)
+            vol = getattr(m, 'volume', 0)
+            table.add_row(m.ticker, f"{bid:.2f}", str(vol))
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self._select_market(event.row_key)
-        
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        self._select_market(event.row_key)
+    async def refresh_poly(self):
+        table = self.query_one("#poly-table", DataTable)
+        table.clear()
+        markets = await self.poly.get_active_markets(limit=20)
+        # Polymarket data is a bit nested
+        self.p_markets = {str(m.get('id')): m for m in markets}
+        for m in markets:
+            # Polymarket 'price' from Gamma is often an estimate or midpoint
+            price = m.get('outcomePrices', ['0'])[0]
+            vol = m.get('volume', '0')
+            table.add_row(m.get('question', 'Unknown')[:40] + "...", price, str(vol))
 
-    def _select_market(self, row_key):
-        table = self.query_one(DataTable)
-        row = table.get_row(row_key)
-        ticker = row[0]
-        
-        if ticker in self.markets:
-            self.query_one("#market-detail").current_market = self.markets[ticker]
+    def update_arb_status(self):
+        # Placeholder for real-time arb logic
+        # In a real run, we'd use ArbEngine.find_matches
+        matches = self.arb.find_matches(self.k_markets.values(), self.p_markets.values())
+        if matches:
+            best = matches[0]
+            self.query_one("#arb-status").update(
+                f"POTENTIAL MATCH: [white]{best['kalshi'].ticker}[/white] <--> [white]{best['poly'].get('question')[:30]}[/white] (Sim: {best['ratio']:.2f})"
+            )
+        else:
+            self.query_one("#arb-status").update("No clear matches found. Broadening search...")
 
 if __name__ == "__main__":
-    app = KalshiTerminal()
+    app = KalshiPolymarketTerminal()
     app.run()
