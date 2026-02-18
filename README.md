@@ -1,11 +1,12 @@
-# ⚡ Antigravity Terminal (Bloomberg Edition)
+# ⚡ PolyTerminal (Bloomberg Edition)
 
 A professional-grade, real-time terminal dashboard for monitoring **Kalshi** and **Polymarket** prediction markets. Built for professional traders with a focus on cross-platform arbitrage.
 
-![Python](https://img.shields.io/badge/python-3.10+-blue)
-![Status](https://img.shields.io/badge/status-Production%20Ready-success)
-
-## Features
+## 🛡️ Security
+PolyTerminal is designed with security as a priority:
+- **Local Signing**: Your private keys never leave your machine. Polymarket orders are signed locally using the `py-clob-client` SDK.
+- **Environment Isolation**: All sensitive credentials (API Keys, Secrets, Private Keys) are stored in `.env` and excluded from Git via `.gitignore`.
+- **Zero-Storage**: The terminal does not store your keys in any database; they are loaded into memory only during runtime.
 
 - **Multi-Platform Monitoring** — Side-by-side view of Kalshi (USD) and Polymarket (USDC) events.
 - **Bloomberg-Style UI** — High-contrast, professional-grade TUI with sub-panels and state monitoring.
@@ -15,8 +16,15 @@ A professional-grade, real-time terminal dashboard for monitoring **Kalshi** and
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Create a Virtual Environment
+Arch Linux (and most modern distros) requires a virtual environment to avoid conflicts with system packages.
 
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```

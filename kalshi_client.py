@@ -182,29 +182,6 @@ class KalshiClient:
             logger.error(f"Error fetching orderbook for {ticker}: {e}")
             return None
 
-    async def get_market_trades(self, ticker: str, limit: int = 100):
-        if self.use_mock:
-            trades = []
-            for _ in range(limit):
-                price = random.uniform(0.30, 0.70)
-                trades.append(type('obj', (object,), {
-                    'yes_price': round(price, 2),
-                    'no_price': round(1-price, 2),
-                    'count': random.randint(1, 10),
-                    'taker_side': random.choice(['yes', 'no']),
-                    'created_time': datetime.now().isoformat()
-                }))
-            return trades
-
-        try:
-            # SDK might have 'ticker' as a keyword or positional. 
-            # Looking at the trace, it seems it might be get_trades(ticker=ticker, limit=limit)
-            response = await self.market_api.get_trades(ticker=ticker, limit=limit)
-            return response.trades
-        except Exception as e:
-            logger.error(f"Error fetching trades for {ticker}: {e}")
-            return []
-
     async def get_market_candlesticks(self, ticker: str, start_time: int, end_time: int, period: int = 60):
         """
         Period in minutes: 1, 60, 1440

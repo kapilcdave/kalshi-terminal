@@ -29,7 +29,6 @@ class PolymarketClient:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
             markets = response.json()
-            # Return list of market objects
             return markets
         except Exception as e:
             logger.error(f"Error fetching Polymarket markets: {e}")
@@ -50,6 +49,21 @@ class PolymarketClient:
             return None
 
     async def get_price(self, token_id: str):
+        """
+        Fetch mid price for a specific token from CLOB API.
+        """
+        url = f"{self.CLOB_URL}/price"
+        params = {"token_id": token_id}
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching price for {token_id}: {e}")
+            return None
+
+    async def close(self):
+        await self.client.aclose()
         """
         Fetch mid price for a specific token from CLOB API.
         """
