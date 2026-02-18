@@ -1,0 +1,234 @@
+/* PredictionTerminal - Claude Code Aesthetic Theme */
+
+/* Base colors - Dark physical look */
+$bg-primary: #0a0a0a;
+$bg-secondary: #141414;
+$bg-tertiary: #1e1e1e;
+$bg-surface: #0d0d0d;
+
+$text-primary: #e0e0e0;
+$text-secondary: #a0a0a0;
+$text-muted: #606060;
+
+$accent-cyan: #00ffff;
+$accent-magenta: #ff00ff;
+$accent-green: #00ff00;
+$accent-orange: #ffaa00;
+$accent-red: #ff3333;
+$accent-yellow: #ffff00;
+
+$border-color: #2a2a2a;
+$border-active: #00ffff;
+
+/* Screen */
+PredictionTerminal {
+    background: $bg-primary;
+    color: $text-primary;
+}
+
+/* Header */
+#header-container {
+    background: linear-gradient(90deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
+    color: $text-primary;
+    dock: top;
+    height: 2;
+    border-bottom: 1px solid $accent-cyan;
+}
+
+#app-title {
+    text-style: bold;
+    color: $accent-cyan;
+    text-shadow: 0 0 10px $accent-cyan;
+}
+
+.separator {
+    color: $text-muted;
+    margin: 0 2;
+}
+
+#connection-status {
+    color: $accent-green;
+    text-style: bold;
+}
+
+#connection-status.disconnected {
+    color: $accent-red;
+}
+
+#latency, #balance {
+    color: $text-secondary;
+    margin-left: 3;
+}
+
+.clock {
+    width: 1fr;
+    text-align: right;
+    color: $accent-green;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* Main Layout */
+#main-layout {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: 2fr 1fr 1fr;
+    grid-rows: 1fr 1;
+}
+
+/* Panes */
+.pane {
+    background: $bg-surface;
+    border: 1px solid $border-color;
+    margin: 1;
+}
+
+.pane-title {
+    background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
+    color: $accent-cyan;
+    text-style: bold;
+    text-transform: uppercase;
+    font-size: 12;
+    padding: 0 2;
+    height: 1;
+    border-bottom: 1px solid $border-color;
+}
+
+/* Market Table */
+#market-table {
+    height: 100%;
+    background: $bg-primary;
+    border: none;
+}
+
+#market-table > .datatable--header {
+    background: $bg-secondary;
+    color: $accent-cyan;
+    text-style: bold;
+}
+
+#market-table > .datatable--cursor {
+    background: rgba(0, 255, 255, 0.15);
+    color: $text-primary;
+}
+
+#market-table > .datatable--row:hover {
+    background: rgba(0, 255, 255, 0.05);
+}
+
+/* Console / RichLog */
+#console-log {
+    height: 100%;
+    background: $bg-primary;
+    border: none;
+    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+    font-size: 12;
+}
+
+/* Sparkline */
+#price-sparkline {
+    height: 100%;
+    background: $bg-primary;
+    color: $accent-green;
+}
+
+#graph-details {
+    height: auto;
+    padding: 1 2;
+    color: $text-secondary;
+    font-family: monospace;
+    font-size: 11;
+    background: $bg-secondary;
+}
+
+/* Command Bar */
+#command-bar {
+    height: 1;
+    dock: bottom;
+    background: $bg-secondary;
+    border-top: 1px solid $border-color;
+    padding: 0 2;
+}
+
+#command-input {
+    width: 100%;
+    background: transparent;
+    color: $accent-cyan;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    border: none;
+}
+
+#command-input:focus {
+    background: transparent;
+}
+
+#command-input::placeholder {
+    color: $text-muted;
+}
+
+/* Footer */
+Footer {
+    background: $bg-secondary;
+    color: $text-secondary;
+}
+
+Footer > .footer--key {
+    color: $accent-cyan;
+}
+
+Footer > .footer--key:hover {
+    background: $accent-cyan;
+    color: $bg-primary;
+}
+
+/* DataTable specific cell colors */
+.datatable--cell {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* Positive/Negative delta colors */
+.delta-positive {
+    color: $accent-green;
+}
+
+.delta-negative {
+    color: $accent-red;
+}
+
+/* Neon glow effects */
+.neon-cyan {
+    text-shadow: 0 0 5px $accent-cyan, 0 0 10px $accent-cyan;
+}
+
+.neon-magenta {
+    text-shadow: 0 0 5px $accent-magenta, 0 0 10px $accent-magenta;
+}
+
+.neon-green {
+    text-shadow: 0 0 5px $accent-green, 0 0 10px $accent-green;
+}
+
+/* Scrollbar styling */
+ScrollableContainer::-webkit-scrollbar {
+    width: 8;
+    background: $bg-secondary;
+}
+
+ScrollableContainer::-webkit-scrollbar-thumb {
+    background: $border-color;
+    border-radius: 4;
+}
+
+ScrollableContainer::-webkit-scrollbar-thumb:hover {
+    background: $accent-cyan;
+}
+
+/* Focus states */
+Button:focus, Input:focus {
+    border: 1px solid $accent-cyan;
+}
+
+/* Selection */
+::selection {
+    background: rgba(0, 255, 255, 0.3);
+    color: $text-primary;
+}
