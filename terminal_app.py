@@ -1,12 +1,11 @@
-
-
 import os
 import asyncio
 import random
+from datetime import datetime
 from dotenv import load_dotenv
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, Grid
-from textual.widgets import Header, Footer, DataTable, Static, Label, Digits, Sparkline, TabbedContent, TabPane, Input
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Footer, DataTable, Static, Label, Input
 from textual.reactive import reactive
 from textual.binding import Binding
 
@@ -14,18 +13,28 @@ from kalshi_client import KalshiClient
 from polymarket_client import PolymarketClient
 from arb_engine import ArbEngine
 from stream_manager import StreamManager
-from agent_hub import AgentHub
 
 load_dotenv()
 
 class BloombergHeader(Static):
     """A custom professional header."""
+    title = reactive("POLYTERMINAL")
+    category = reactive("ALL MARKETS")
+
     def compose(self) -> ComposeResult:
         with Horizontal(id="bbg-header"):
-            yield Label("POLYTERMINAL", id="app-title")
+            yield Label(self.title, id="app-title")
+            yield Label(" | ", classes="separator")
+            yield Label(self.category, id="app-category")
             yield Label(" | ", classes="separator")
             yield Label("PRO EDITION v1.0", id="app-subtitle")
             yield Label("", id="clock")
+
+    def watch_category(self, category: str) -> None:
+        try:
+            self.query_one("#app-category").update(category.upper())
+        except:
+            pass
 
 class MarketPane(Vertical):
     """A pane displaying markets for a specific platform."""
@@ -38,7 +47,7 @@ class MarketPane(Vertical):
         yield Label(self.pane_title, classes="pane-header")
         yield DataTable(id=f"{self.platform}-table")
 
-class KalshiPolymarketTerminal(App):
+class PolyTerminal(App):
     CSS = """
     Screen {
         background: #000000;
@@ -54,14 +63,16 @@ class KalshiPolymarketTerminal(App):
 
     #app-title { text-style: bold; color: #00FFFF; }
     .separator { color: #555555; }
+    #app-category { color: #FFA500; text-style: bold; }
     #app-subtitle { color: #AAAAAA; }
+    #clock { width: 1fr; text-align: right; color: #00FF00; }
 
     .pane-header {
-        background: #222222;
-        color: #FFA500;
+        background: #111111;
+        color: #FFFFFF;
         padding: 0 1;
         text-style: bold;
-        border-bottom: solid #444444;
+        border-bottom: solid #00FFFF;
     }
 
     DataTable {
@@ -72,13 +83,13 @@ class KalshiPolymarketTerminal(App):
     }
 
     DataTable > .datatable--header {
-        background: #111111;
+        background: #050505;
         color: #00FFFF;
         text-style: bold;
     }
 
     DataTable > .datatable--cursor {
-        background: #333333;
+        background: #003333;
         color: #FFFFFF;
     }
 
@@ -86,31 +97,6 @@ class KalshiPolymarketTerminal(App):
         layout: grid;
         grid-size: 2;
         grid-columns: 1fr 1fr;
-    }
-
-    #arb-pane {
-        height: 8;
-        background: #001100;
-        border-top: double #00FF00;
-        padding: 0 1;
-    }
-
-    .arb-header { color: #00FF00; text-style: bold; }
-    .arb-item { color: #FFFFFF; }
-    .profitable { color: #00FF00; text-style: bold; }
-
-    #agent-pane {
-        height: 10;
-        border-top: heavy #8800FF;
-        background: #0a001a;
-        padding: 0 1;
-    }
-
-    .agent-header { color: #8800FF; text-style: bold; }
-    #agent-input {
-        background: #111111;
-        color: #FFFFFF;
-        border: none;
     }
 
     Footer {
@@ -121,9 +107,17 @@ class KalshiPolymarketTerminal(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh All"),
-        Binding("a", "toggle_arb", "Arb Monitor"),
+        Binding("r", "refresh", "Refresh"),
+        Binding("f1", "filter('financial')", "Financial"),
+        Binding("f2", "filter('politics')", "Politics"),
+        Binding("f3", "filter('sports')", "Sports"),
+        Binding("f4", "filter('all')", "All"),
+        Binding("t", "toggle_theme", "Toggle Theme"),
     ]
+
+    current_niche = reactive("all")
+    themes = ["bloomberg", "hacker", "classic"]
+    current_theme_index = reactive(0)
 
     def __init__(self):
         super().__init__()
@@ -132,26 +126,15 @@ class KalshiPolymarketTerminal(App):
         self.arb = ArbEngine(self.kalshi, self.poly)
         self.k_markets = {}
         self.p_markets = {}
-        self.current_match = None
 
     def compose(self) -> ComposeResult:
         yield BloombergHeader()
         with Container(id="main-container"):
-            yield MarketPane("KALSHI MARKETS (USD)", "kalshi")
+            yield MarketPane("KALSHI (USD)", "kalshi")
             yield MarketPane("POLYMARKET (USDC)", "poly")
-        with Vertical(id="arb-pane"):
-            yield Label("ACTIVE ARBITRAGE SCANNER", classes="arb-header")
-            yield Static("Scanning for opportunities...", id="arb-status")
-        with Vertical(id="agent-pane"):
-            yield Label("AGENT COMMAND CENTER (BETA)", classes="agent-header")
-            yield Static("Ready for commands. Type 'analyze' or 'execute'...", id="agent-output")
-            yield Input(placeholder="Ask the Terminal Agent...", id="agent-input")
         yield Footer()
 
     async def on_mount(self) -> None:
-        # Initial Auth & Hubs
-        self.agent_hub = AgentHub(self)
-        
         # Setup Tables
         k_table = self.query_one("#kalshi-table", DataTable)
         k_table.add_columns("Ticker", "Price", "Vol")
@@ -163,100 +146,99 @@ class KalshiPolymarketTerminal(App):
 
         await self.kalshi.login()
         
-        # Start Stream Manager
-        self.stream = StreamManager(self.handle_stream_update)
-        asyncio.create_task(self.stream.start())
+        # Start Clock Update
+        self.set_interval(1, self.update_clock)
+        
+        # Start Stream Manager for live price updates if needed
+        # self.stream = StreamManager(self.handle_stream_update)
+        # asyncio.create_task(self.stream.start())
         
         await self.action_refresh()
 
-    async def handle_stream_update(self, platform, data):
-        """Handle real-time updates from WebSocket."""
-        if platform == "poly":
-            # Polymarket WS format (Market channel):
-            # {"event": "price_update", "asset_id": "...", "price": "..."}
-            if data.get("event") == "price_update":
-                token_id = data.get("asset_id")
-                new_price = data.get("price")
-                # Update our local record
-                for m_id, m in self.p_markets.items():
-                    if m.get('tokens') and m['tokens'][0]['token_id'] == token_id:
-                        m['outcomePrices'] = [new_price]
-                        # Refresh table row
-                        self.refresh_table_row("poly", m_id)
-                        break
-        
-        self.update_arb_status()
-
-    def refresh_table_row(self, platform, item_id):
-        """Update a specific row in the DataTable without clearing everything."""
-        table = self.query_one(f"#{platform}-table", DataTable)
-        if platform == "poly":
-            m = self.p_markets.get(item_id)
-            # This is tricky because Textual's DataTable uses keys or coordinates.
-            # For simplicity in this TUI, we might just re-render or find by coordinate.
-            # Transitioning to coordinate-based update would be better for performance.
+    def update_clock(self):
+        try:
+            self.query_one("#clock").update(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        except:
             pass
 
     async def action_refresh(self) -> None:
         await asyncio.gather(
-            self.refresh_kalshi(),
-            self.refresh_poly()
+            self.refresh_kalshi(self.current_niche if self.current_niche != "all" else None),
+            self.refresh_poly(self.current_niche if self.current_niche != "all" else None)
         )
-        self.update_arb_status()
+        self.highlight_matches()
 
-    async def refresh_kalshi(self):
+    async def refresh_kalshi(self, category=None):
         table = self.query_one("#kalshi-table", DataTable)
         table.clear()
-        markets = await self.kalshi.get_active_markets(limit=20)
+        markets = await self.kalshi.get_active_markets(limit=30, category=category)
         self.k_markets = {m.ticker: m for m in markets}
         for m in markets:
             bid = getattr(m, 'yes_bid', 0)
             vol = getattr(m, 'volume', 0)
-            table.add_row(m.ticker, f"{bid:.2f}", str(vol))
+            table.add_row(m.ticker, f"{bid:.2f}", str(vol), key=m.ticker)
 
-    async def refresh_poly(self):
+    async def refresh_poly(self, category=None):
         table = self.query_one("#poly-table", DataTable)
         table.clear()
-        markets = await self.poly.get_active_markets(limit=20)
-        self.p_markets = {str(m.get('id')): m for m in markets}
         
-        token_ids = []
+        poly_tag = None
+        if category == "politics": poly_tag = "Politics"
+        elif category == "sports": poly_tag = "Sports"
+        elif category == "financial": poly_tag = "Business"
+        
+        markets = await self.poly.get_active_markets(limit=30, tag=poly_tag)
+        self.p_markets = {str(m.get('id')): m for m in markets}
         for m in markets:
             price = m.get('outcomePrices', ['0'])[0]
             vol = m.get('volume', '0')
-            table.add_row(m.get('question', 'Unknown')[:40] + "...", price, str(vol))
-            if m.get('tokens'):
-                token_ids.append(m['tokens'][0]['token_id'])
+            table.add_row(m.get('question', 'Unknown')[:50] + "...", price, str(vol), key=str(m.get('id')))
 
-        # Update WebSocket subscription
-        if hasattr(self, 'stream'):
-            await self.stream.subscribe_poly(token_ids)
-
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle agent command input."""
-        if event.input.id == "agent-input":
-            command = event.value
-            event.input.value = "" # Clear input
-            self.query_one("#agent-output").update(f"[cyan]Agent:[/] Processing '{command}'...")
+    def highlight_matches(self):
+        """Spot markets that appear on both platforms."""
+        matches = self.arb.find_matches(self.k_markets.values(), self.p_markets.values(), threshold=0.7)
+        # We can add a simple Visual cue like a '*' or color if Textual row styling allows
+        # For now, let's update titles of matching rows to show they are paired
+        k_table = self.query_one("#kalshi-table", DataTable)
+        p_table = self.query_one("#poly-table", DataTable)
+        
+        for match in matches:
+            k_ticker = match['kalshi'].ticker
+            p_id = str(match['poly'].get('id'))
             
-            # Call the agent hub
-            response = await self.agent_hub.process_query(command)
-            self.query_one("#agent-output").update(f"[cyan]Agent:[/] {response}")
+            # Highlight by adding a prefix or changing color if possible
+            # In Textual, updating a single cell is easiest
+            try:
+                k_table.update_cell(k_ticker, "Ticker", f"🔗 {k_ticker}")
+                current_p_val = p_table.get_cell(p_id, "Market")
+                if not current_p_val.startswith("🔗"):
+                    p_table.update_cell(p_id, "Market", f"🔗 {current_p_val}")
+            except:
+                pass
 
-    def update_arb_status(self):
-        # Placeholder for real-time arb logic
-        # In a real run, we'd use ArbEngine.find_matches
-        matches = self.arb.find_matches(self.k_markets.values(), self.p_markets.values())
-        if matches:
-            self.current_match = matches[0]
-            best = self.current_match
-            self.query_one("#arb-status").update(
-                f"POTENTIAL MATCH: [white]{best['kalshi'].ticker}[/white] <--> [white]{best['poly'].get('question')[:30]}[/white] (Sim: {best['ratio']:.2f})"
-            )
-        else:
-            self.current_match = None
-            self.query_one("#arb-status").update("No clear matches found. Broadening search...")
+    async def action_filter(self, niche: str) -> None:
+        self.current_niche = niche
+        self.query_one(BloombergHeader).category = niche
+        await self.action_refresh()
+
+    def action_toggle_theme(self) -> None:
+        self.current_theme_index = (self.current_theme_index + 1) % len(self.themes)
+        theme = self.themes[self.current_theme_index]
+        self.apply_theme(theme)
+
+    def apply_theme(self, theme_name: str):
+        # Programmatic style adjustment for Textual
+        if theme_name == "hacker":
+            self.theme = "dracula" # Textual built-in or custom colors
+            self.styles.background = "#001100"
+            self.styles.color = "#00FF00"
+        elif theme_name == "classic":
+            self.styles.background = "#f0f0f0"
+            self.styles.color = "#000000"
+        else: # Bloomberg
+            self.styles.background = "#000000"
+            self.styles.color = "#00FFFF"
 
 if __name__ == "__main__":
-    app = KalshiPolymarketTerminal()
+    app = PolyTerminal()
     app.run()

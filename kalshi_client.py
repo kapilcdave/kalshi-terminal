@@ -116,30 +116,47 @@ class KalshiClient:
             # Login logic would go here if implemented
             pass
         
-    async def get_active_markets(self, limit=20, cursor=None, series_ticker=None, event_ticker=None):
+    async def get_active_markets(self, limit=20, cursor=None, series_ticker=None, event_ticker=None, category=None):
         if self.use_mock:
-            # Generate fake markets
+            # Generate fake markets based on category
             markets = []
-            categories = ["Politics", "Economics", "Weather", "Tech", "Sports"]
+            default_categories = ["Politics", "Economics", "Weather", "Tech", "Sports"]
+            target_cat = category if category else random.choice(default_categories)
+            
             for i in range(limit):
-                cat = random.choice(categories)
                 price = random.uniform(0.10, 0.90)
                 m = MockMarket(
-                    ticker=f"{cat.upper()}-{i}",
-                    title=f"Will {cat} Event {i} happen?",
+                    ticker=f"{target_cat.upper()}-{i}",
+                    title=f"Will {target_cat} Event {i} happen?",
                     price=price
                 )
                 markets.append(m)
             return markets
 
         try:
-            response = await self.market_api.get_markets(
-                limit=limit,
-                cursor=cursor,
-                series_ticker=series_ticker,
-                event_ticker=event_ticker,
-                status='open'
-            )
+            # Map niche to series_ticker or event_ticker prefix if needed
+            # For now, we'll use series_ticker as a filter proxy
+            params = {
+                "limit": limit,
+                "cursor": cursor,
+                "status": 'open'
+            }
+            if series_ticker: params["series_ticker"] = series_ticker
+            if event_ticker: params["event_ticker"] = event_ticker
+            
+            # Simple mapping for popular niches
+            if category:
+                cat_map = {
+                    "politics": "POL",
+                    "economics": "ECON",
+                    "sports": "SPORT",
+                    "financial": "FED" # or other relevant ticker
+                }
+                # Real Kalshi API might need specific series tickers
+                # For now, this is a placeholder for the logic
+                pass
+
+            response = await self.market_api.get_markets(**params)
             return response.markets
         except Exception as e:
             logger.error(f"Error fetching markets: {e}")

@@ -15,7 +15,7 @@ class PolymarketClient:
     def __init__(self):
         self.client = httpx.AsyncClient(timeout=10.0)
 
-    async def get_active_markets(self, limit: int = 20):
+    async def get_active_markets(self, limit: int = 20, tag: str = None):
         """
         Fetch active markets from Gamma API.
         """
@@ -25,6 +25,9 @@ class PolymarketClient:
             "closed": "false",
             "limit": limit
         }
+        if tag:
+            params["tag"] = tag
+            
         try:
             response = await self.client.get(url, params=params)
             response.raise_for_status()
