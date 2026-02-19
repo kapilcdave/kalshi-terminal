@@ -5,8 +5,8 @@ from datetime import datetime
 from collections import defaultdict
 from dotenv import load_dotenv
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.widgets import Footer, DataTable, Static, Label, Header
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Footer, DataTable, Static, Label
 from textual.reactive import reactive
 from textual.binding import Binding
 
@@ -16,20 +16,7 @@ from arb_engine import ArbEngine
 
 load_dotenv()
 
-THEMES = ["nord", "gruvbox", "tokyo-night", "textual-dark", "solarized-light", "monokai"]
-
-class BloombergHeader(Static):
-    title = reactive("POLYTERMINAL")
-    category = reactive("ALL MARKETS")
-
-    def compose(self) -> ComposeResult:
-        with Horizontal(id="bbg-header"):
-            yield Label(self.title, id="app-title")
-            yield Label(" | ", classes="separator")
-            yield Label(self.category, id="app-category")
-            yield Label(" | ", classes="separator")
-            yield Label("v1.0", id="app-subtitle")
-            yield Label("", id="clock")
+THEMES = ["nord", "gruvbox", "tokyo-night", "textual-dark", "solarized_light", "monokai"]
 
 class PolyTerminal(App):
     BINDINGS = [
@@ -53,27 +40,62 @@ class PolyTerminal(App):
         self.arb = ArbEngine(self.kalshi, self.poly)
         self.k_markets = {}
         self.p_markets = {}
-        self.expanded_groups = set()
 
     def compose(self) -> ComposeResult:
-        yield BloombergHeader()
-        with Container(id="main-container"):
-            with ScrollableContainer(id="kalshi-pane"):
-                yield Label("KALSHI (USD)", classes="pane-header")
+        yield Horizontal(
+            Label("POLYTERMINAL ", classes="title"),
+            Label("|", classes="sep"),
+            Label("ALL MARKETS", id="cat"),
+            Label("|", classes="sep"),
+            Label(" v1.0 ", id="ver"),
+            Label("", id="clock"),
+            id="header"
+        )
+        with Horizontal(id="main"):
+            with Vertical(id="kalshi-col"):
+                yield Label("KALSHI (USD)", classes="pane-title")
                 yield DataTable(id="kalshi-table")
-            with ScrollableContainer(id="poly-pane"):
-                yield Label("POLYMARKET (USDC)", classes="pane-header")
+            with Vertical(id="poly-col"):
+                yield Label("POLYMARKET (USDC)", classes="pane-title")
                 yield DataTable(id="poly-table")
         yield Footer()
+
+    CSS = """
+    #header {
+        height: 1;
+        dock: top;
+    }
+    .title { text-style: bold; }
+    .sep { color: gray; }
+    #cat { color: orange; text-style: bold; }
+    #clock { width: 1fr; text-align: right; }
+    
+    #main {
+        height: 1fr;
+    }
+    
+    #kalshi-col, #poly-col {
+        width: 1fr;
+        height: 100%;
+    }
+    
+    .pane-title {
+        height: 1;
+        dock: top;
+        text-style: bold;
+    }
+    
+    DataTable {
+        height: 100%;
+    }
+    """
 
     async def on_mount(self) -> None:
         k_table = self.query_one("#kalshi-table", DataTable)
         k_table.add_columns("Group", "Market", "Yes", "No", "Vol")
-        k_table.cursor_type = "row"
-
+        
         p_table = self.query_one("#poly-table", DataTable)
         p_table.add_columns("Group", "Market", "Yes", "No", "Vol")
-        p_table.cursor_type = "row"
 
         await self.kalshi.login()
         self.set_interval(1, self.update_clock)
@@ -81,7 +103,7 @@ class PolyTerminal(App):
 
     def update_clock(self):
         try:
-            self.query_one("#clock").update(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            self.query_one("#clock").update(datetime.now().strftime("%H:%M:%S"))
         except:
             pass
 
@@ -96,14 +118,12 @@ class PolyTerminal(App):
             parts = ticker.split("-")
             if len(parts) >= 2:
                 base = parts[0] + "-" + parts[1]
-                if len(base) > 18:
-                    base = base[:18]
-                return base
+                return base[:15] if len(base) > 15 else base
         if title:
             words = title.split()
-            if len(words) >= 3:
-                return " ".join(words[:2])[:18]
-        return ticker[:18]
+            if len(words) >= 2:
+                return words[0][:15]
+        return ticker[:15]
 
     async def refresh_kalshi(self, category=None):
         table = self.query_one("#kalshi-table", DataTable)
@@ -132,7 +152,7 @@ class PolyTerminal(App):
                 
                 table.add_row(
                     event_name,
-                    title[:40] + "..." if len(title) > 40 else title,
+                    title[:35] + "..." if len(title) > 35 else title,
                     f"{yes_price:.2f}" if yes_price > 0 else "--",
                     f"{no_price:.2f}" if no_price > 0 else "--",
                     f"{vol:,}",
@@ -174,7 +194,7 @@ class PolyTerminal(App):
                 
                 table.add_row(
                     event_name,
-                    question[:40] + "..." if len(question) > 40 else question,
+                    question[:35] + "..." if len(question) > 35 else question,
                     f"{yes_price:.2f}",
                     f"{no_price:.2f}",
                     f"{int(vol):,}",
@@ -184,7 +204,7 @@ class PolyTerminal(App):
     async def action_filter(self, niche: str) -> None:
         self.current_niche = niche
         try:
-            self.query_one("#app-category").update(niche.upper())
+            self.query_one("#cat").update(niche.upper())
         except:
             pass
         await self.action_refresh()
@@ -192,7 +212,6 @@ class PolyTerminal(App):
     def action_next_theme(self) -> None:
         self.current_theme_idx = (self.current_theme_idx + 1) % len(THEMES)
         self.theme = THEMES[self.current_theme_idx]
-        self.sub_title = f"Theme: {self.theme}"
 
 if __name__ == "__main__":
     app = PolyTerminal()
