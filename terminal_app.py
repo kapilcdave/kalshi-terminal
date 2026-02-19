@@ -1,8 +1,9 @@
 import os
 import asyncio
 import re
+import json
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, deque
 from difflib import SequenceMatcher
 from dotenv import load_dotenv
 from textual.app import App, ComposeResult
@@ -13,7 +14,6 @@ from textual.binding import Binding
 
 from kalshi_client import KalshiClient
 from polymarket_client import PolymarketClient
-from arb_engine import ArbEngine
 
 load_dotenv()
 
@@ -21,50 +21,10 @@ THEMES = ["nord", "gruvbox", "tokyo-night", "textual-dark", "solarized-dark", "m
 
 class MarketClassifier:
     CATEGORIES = {
-        "politics": [
-            r"\btrump\b", r"\bbiden\b", r"\bpresident\b", r"\belection\b", r"\bcongress\b",
-            r"\bsenate\b", r"\bhouse\b", r"\bdemocrat\b", r"\brepublican\b", r"\bgop\b",
-            r"\bgovernor\b", r"\bmayor\b", r"\bprime minister\b", r"\bparliament\b",
-            r"\bvote\b", r"\brecall\b", r"\breferendum\b", r"\bpolicy\b", r"\bbill\b",
-            r"\bfederal\b", r"\bstate\b", r"\bcourt\b", r"\bsupreme\b", r"\bjustice\b",
-            r"\bsenator\b", r"\brepresentative\b", r"\bpolitical\b", r"\bwikileaks\b",
-            r"\bpalestine\b", r"\bisrael\b", r"\bukraine\b", r"\brussia\b", r"\bchina\b",
-            r"\biran\b", r"\bnorth korea\b", r"\btaiwan\b", r"\beu\b", r"\beurope\b"
-        ],
-        "sports": [
-            r"\bnba\b", r"\bnfl\b", r"\bmlb\b", r"\bnhl\b", r"\bcollege\b", r"\bfootball\b",
-            r"\bbasketball\b", r"\bbaseball\b", r"\bhockey\b", r"\bsoccer\b", r"\bgolf\b",
-            r"\btennis\b", r"\boxford\b", r"\bchampionship\b", r"\bgame\b", r"\bwin\b",
-            r"\blose\b", r"\bwinner\b", r"\bplayoff\b", r"\bseason\b", r"\bteam\b",
-            r"\bplayer\b", r"\bscore\b", r"\bmvp\b", r"\btournament\b", r"\bfinal\b",
-            r"\bsemifinal\b", r"\bquarter\b", r"\bseed\b", r"\brank\b", r"\bATP\b",
-            r"\bWTA\b", r"\bNCAAB\b", r"\bNCAABBGAME\b", r"\b3pt\b", r"\bthree.point\b"
-        ],
-        "financial": [
-            r"\bfed\b", r"\binterest\b", r"\brate\b", r"\binflation\b", r"\bgdp\b",
-            r"\bmarket\b", r"\bstock\b", r"\bsp500\b", r"\bdow\b", r"\bnasdaq\b",
-            r"\bbitcoin\b", r"\bbtc\b", r"\bcrypto\b", r"\bethereum\b", r"\bcryptocurrency\b",
-            r"\btreasury\b", r"\byield\b", r"\bbond\b", r"\brecession\b", r"\beconomy\b",
-            r"\bunemployment\b", r"\bjobs\b", r"\blabor\b", r"\b wage\b", r"\bsalary\b",
-            r"\brevenue\b", r"\btax\b", r"\btariff\b", r"\btrade\b", r"\bimport\b",
-            r"\bexport\b", r"\bdoge\b", r"\bbudget\b", r"\bspending\b"
-        ],
-        "entertainment": [
-            r"\boscar\b", r"\bgrammy\b", r"\bemmy\b", r"\bgolden globe\b", r"\baward\b",
-            r"\bmovie\b", r"\bfilm\b", r"\bnetflix\b", r"\bdisney\b", r"\bhollywood\b",
-            r"\bactor\b", r"\bactress\b", r"\bdirector\b", r"\bbox office\b", r"\bgta\b",
-            r"\bvideo game\b", r"\brelease\b", r"\balbum\b", r"\bmusic\b", r"\bsong\b",
-            r"\bchart\b", r"\bbillboard\b", r"\btop\b", r"\bsingle\b", r"\bartist\b",
-            r"\btour\b", r"\bconcert\b", r"\bfestival\b"
-        ],
-        "science": [
-            r"\bspace\b", r"\bnasa\b", r"\bmars\b", r"\bmoon\b", r"\bstarship\b",
-            r"\bsatellite\b", r"\btelescope\b", r"\bclimate\b", r"\bweather\b",
-            r"\btemperature\b", r"\bhurricane\b", r"\bstorm\b", r"\bearthquake\b",
-            r"\bvolcano\b", r"\bpandemic\b", r"\bvirus\b", r"\bcovid\b", r"\bvaccine\b",
-            r"\bAI\b", r"\bartificial intelligence\b", r"\bmachine learning\b",
-            r"\bquantum\b", r"\bphysics\b", r"\bchemistr", r"\bbio\b", r"\bgene\b"
-        ]
+        "politics": [r"\btrump\b", r"\bbiden\b", r"\bpresident\b", r"\belection\b", r"\bcongress\b", r"\bsenate\b", r"\bhouse\b", r"\bdemocrat\b", r"\brepublican\b", r"\bgov\b", r"\bsenator\b", r"\brussia\b", r"\bukraine\b", r"\bisrael\b", r"\bchina\b", r"\biran\b"],
+        "sports": [r"\bnba\b", r"\bnfl\b", r"\bmlb\b", r"\bnhl\b", r"\bcollege\b", r"\bfootball\b", r"\bbasketball\b", r"\bbaseball\b", r"\bhockey\b", r"\bsoccer\b", r"\bgolf\b", r"\btennis\b", r"\bATP\b", r"\bNCAAB\b", r"\b3pt\b", r"\bgame\b", r"\bwin\b", r"\bplayoff\b"],
+        "financial": [r"\bfed\b", r"\binterest\b", r"\brate\b", r"\binflation\b", r"\bgdp\b", r"\bmarket\b", r"\bstock\b", r"\bbitcoin\b", r"\bbtc\b", r"\bcrypto\b", r"\brecession\b", r"\beconomy\b", r"\bdoge\b", r"\bbudget\b", r"\brevenue\b"],
+        "entertainment": [r"\boscar\b", r"\bgrammy\b", r"\bemmy\b", r"\bmovie\b", r"\bnetflix\b", r"\bdisney\b", r"\bgta\b", r"\balbum\b", r"\bmusic\b"],
     }
     
     @classmethod
@@ -82,246 +42,410 @@ class FuzzyMatcher:
         return SequenceMatcher(None, a.lower(), b.lower()).ratio()
     
     @classmethod
-    def find_matches(cls, kalshi_markets, poly_markets, threshold: float = 0.5):
-        matches = []
-        for km in kalshi_markets:
-            k_title = getattr(km, 'title', km.ticker) or km.ticker
-            best_match = None
-            best_score = threshold
-            
-            for pm in poly_markets:
-                p_question = pm.get('question', '')
-                score = cls.similarity(k_title, p_question)
-                
-                if score > best_score:
-                    best_score = score
-                    best_match = pm
-            
-            if best_match:
-                matches.append({
-                    'kalshi': km,
-                    'polymarket': best_match,
-                    'score': best_score
-                })
+    def find_best_match(cls, k_title: str, poly_questions: dict, threshold=0.3):
+        best_match = None
+        best_score = threshold
+        best_id = None
         
-        return matches
+        for q_id, q_text in poly_questions.items():
+            score = cls.similarity(k_title, q_text)
+            if score > best_score:
+                best_score = score
+                best_match = q_text
+                best_id = q_id
+        
+        return best_id, best_match, best_score
+
+class PriceHistory:
+    def __init__(self, maxlen=50):
+        self.maxlen = maxlen
+        self.data = {}
+    
+    def add(self, key, price):
+        if key not in self.data:
+            self.data[key] = deque(maxlen=self.maxlen)
+        if price:
+            self.data[key].append(price)
+    
+    def get(self, key):
+        return list(self.data.get(key, []))
 
 class PolyTerminal(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
-        Binding("f1", "filter('financial')", "Financial"),
-        Binding("f2", "filter('politics')", "Politics"),
-        Binding("f3", "filter('sports')", "Sports"),
-        Binding("f4", "filter('entertainment')", "Entertainment"),
-        Binding("f5", "filter('science')", "Science"),
-        Binding("f6", "filter('all')", "All"),
+        Binding("f1", "filter('financial')", "Fin"),
+        Binding("f2", "filter('politics')", "Pol"),
+        Binding("f3", "filter('sports')", "Spo"),
+        Binding("f4", "filter('all')", "All"),
         Binding("t", "next_theme", "Theme"),
+        Binding("l", "toggle_live", "Live"),
     ]
 
     current_niche = reactive("all")
     current_theme_idx = reactive(0)
+    live_enabled = reactive(True)
+    selected_row = reactive(None)
 
     def __init__(self):
         super().__init__()
         self.theme = THEMES[0]
         self.kalshi = KalshiClient()
         self.poly = PolymarketClient()
-        self.arb = ArbEngine(self.kalshi, self.poly)
         self.k_markets = {}
         self.p_markets = {}
-        self.matches = []
+        self.matched_markets = []
+        self.live_prices = {}
+        self.kalshi_connected = False
+        self.poly_connected = False
+        self._ws_tasks = []
+        self.price_history = PriceHistory()
+        self._price_update_interval = None
 
     def compose(self) -> ComposeResult:
         yield Horizontal(
-            Label("POLYTERMINAL ", classes="title"),
+            Label("TERMINAL", classes="title"),
             Label("|", classes="sep"),
-            Label("ALL MARKETS", id="cat"),
+            Label("ALL", id="cat"),
             Label("|", classes="sep"),
-            Label(" v1.0 ", id="ver"),
-            Label("", id="clock"),
+            Label("●", id="k-status", classes="status-off"),
+            Label("●", id="p-status", classes="status-off"),
+            Label("", id="clock", classes="clock"),
             id="header"
         )
-        with Horizontal(id="main"):
-            with Vertical(id="kalshi-col"):
-                yield Label("KALSHI (USD)", classes="pane-title")
-                yield DataTable(id="kalshi-table")
-            with Vertical(id="poly-col"):
-                yield Label("POLYMARKET (USDC)", classes="pane-title")
-                yield DataTable(id="poly-table")
+        with Vertical(id="content"):
+            with Vertical(id="main-pane"):
+                yield DataTable(id="markets-table")
+            with Horizontal(id="detail"):
+                with Vertical(id="detail-left", classes="detail-pane"):
+                    yield Label("KALS", classes="detail-label")
+                    yield Label("", id="detail-k-title", classes="detail-title")
+                    yield Label("", id="detail-k-price", classes="detail-price")
+                with Vertical(id="detail-center", classes="detail-pane"):
+                    yield Label("SPREAD", classes="detail-label")
+                    yield Label("", id="detail-spread", classes="detail-spread")
+                with Vertical(id="detail-right", classes="detail-pane"):
+                    yield Label("POLY", classes="detail-label")
+                    yield Label("", id="detail-p-title", classes="detail-title")
+                    yield Label("", id="detail-p-price", classes="detail-price")
         yield Footer()
 
     CSS = """
-    #header {
-        height: 1;
-        dock: top;
-    }
+    #header { height: 1; dock: top; }
     .title { text-style: bold; }
     .sep { color: gray; }
     #cat { color: orange; text-style: bold; }
-    #clock { width: 1fr; text-align: right; }
-    
-    #main {
-        height: 1fr;
-    }
-    
-    #kalshi-col, #poly-col {
-        width: 1fr;
-        height: 100%;
-    }
-    
-    .pane-title {
-        height: 1;
-        dock: top;
-        text-style: bold;
-    }
-    
-    DataTable {
-        height: 100%;
-    }
+    .clock { width: 1fr; text-align: right; }
+    .status-off { color: red; }
+    .status-on { color: green; }
+    #content { height: 1fr; }
+    #main-pane { height: 1fr; }
+    #detail { height: 8; dock: bottom; background: $surface; }
+    .detail-pane { width: 1fr; height: 100%; }
+    .detail-label { width: 100%; text-align: center; text-style: bold; color: $accent; }
+    .detail-title { width: 100%; text-align: center; }
+    .detail-price { width: 100%; text-align: center; text-style: bold; }
+    .detail-spread { width: 100%; height: 5; text-align: center; text-style: bold; }
     """
 
     async def on_mount(self) -> None:
-        k_table = self.query_one("#kalshi-table", DataTable)
-        k_table.add_columns("Cat", "Group", "Market", "Yes", "No", "Vol")
-        
-        p_table = self.query_one("#poly-table", DataTable)
-        p_table.add_columns("Cat", "Group", "Market", "Yes", "No", "Vol")
+        table = self.query_one("#markets-table", DataTable)
+        table.add_columns("Match", "Kalshi Price", "Kalshi Market", "Poly Price", "Poly Market", "Spread")
+        table.cursor_type = "row"
 
         await self.kalshi.login()
         self.set_interval(1, self.update_clock)
+        
         await self.action_refresh()
+        
+        if self.live_enabled:
+            await self.start_live()
+
+    async def start_live(self):
+        self._ws_tasks = [
+            asyncio.create_task(self._kalshi_ws()),
+            asyncio.create_task(self._poly_ws())
+        ]
+        self._price_update_interval = self.set_interval(2, self.update_prices)
+
+    async def stop_live(self):
+        for task in self._ws_tasks:
+            task.cancel()
+        self._ws_tasks = []
+        if self._price_update_interval:
+            self._price_update_interval.stop()
+        self.kalshi_connected = False
+        self.poly_connected = False
+
+    async def update_prices(self):
+        table = self.query_one("#markets-table", DataTable)
+        
+        for i, match in enumerate(self.matched_markets):
+            k_ticker = match.get('k_ticker')
+            p_id = match.get('p_id')
+            
+            k_price = self.live_prices.get(f"k_{k_ticker}", 0)
+            p_price = self.live_prices.get(f"p_{p_id}", 0)
+            
+            if k_price or p_price:
+                k_display = f"{k_price:.2f}" if k_price else "--"
+                p_display = f"{p_price:.2f}" if p_price else "--"
+                spread = abs(k_price - p_price) * 100 if k_price and p_price else 0
+                
+                try:
+                    table.update_row_at(i, (match.get('match_indicator', '○'), k_display, match.get('k_title', '')[:30], p_display, match.get('p_title', '')[:30], f"{spread:.1f}%"))
+                except:
+                    pass
+
+    async def _kalshi_ws(self):
+        import websockets
+        url = "wss://demo-api.kalshi.co/trade-api/v2/stream"
+        
+        while self.live_enabled:
+            try:
+                async with websockets.connect(url) as ws:
+                    self.kalshi_connected = True
+                    self._update_status()
+                    
+                    await ws.send(json.dumps({"type": "subscribe", "channel": "markets", "markets": ["*"]}))
+                    
+                    async for msg in ws:
+                        if not self.live_enabled:
+                            break
+                        try:
+                            data = json.loads(msg)
+                            ticker = data.get("ticker")
+                            if ticker:
+                                price = 0
+                                if data.get("type") == "trade":
+                                    price = data.get("price", 0) / 100
+                                elif data.get("type") == "orderbook":
+                                    ob = data.get("orderbook", {})
+                                    yes = ob.get("yes", [])
+                                    if yes:
+                                        price = yes[0][0] / 100
+                                if price > 0:
+                                    self.live_prices[f"k_{ticker}"] = price
+                                    self.price_history.add(f"k_{ticker}", price)
+                        except:
+                            pass
+            except:
+                self.kalshi_connected = False
+                self._update_status()
+                await asyncio.sleep(5)
+
+    async def _poly_ws(self):
+        import websockets
+        url = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+        
+        while self.live_enabled:
+            try:
+                async with websockets.connect(url) as ws:
+                    self.poly_connected = True
+                    self._update_status()
+                    
+                    await ws.send(json.dumps({"type": "market", "operation": "subscribe", "assets_ids": []}))
+                    
+                    async for msg in ws:
+                        if not self.live_enabled:
+                            break
+                        try:
+                            data = json.loads(msg)
+                            asset_id = data.get("asset_id") or data.get("token_id")
+                            if asset_id:
+                                price = 0
+                                if data.get("type") == "price_change":
+                                    price = float(data.get("price", 0))
+                                elif data.get("type") == "orderbook_change":
+                                    bids = data.get("bids", [])
+                                    if bids:
+                                        price = float(bids[0].get("price", 0))
+                                if price > 0:
+                                    self.live_prices[f"p_{asset_id}"] = price
+                                    self.price_history.add(f"p_{asset_id}", price)
+                        except:
+                            pass
+            except:
+                self.poly_connected = False
+                self._update_status()
+                await asyncio.sleep(5)
+
+    def _update_status(self):
+        try:
+            ks = self.query_one("#k-status", Label)
+            ps = self.query_one("#p-status", Label)
+            ks.update("●" if self.kalshi_connected else "○")
+            ps.update("●" if self.poly_connected else "○")
+            ks.set_class(self.kalshi_connected, "status-on")
+            ks.set_class(not self.kalshi_connected, "status-off")
+            ps.set_class(self.poly_connected, "status-on")
+            ps.set_class(not self.poly_connected, "status-off")
+        except:
+            pass
 
     def update_clock(self):
         try:
-            self.query_one("#clock").update(datetime.now().strftime("%H:%M:%S"))
+            self.query_one("#clock").update(datetime.now().strftime("%H:%M"))
         except:
             pass
 
     async def action_refresh(self) -> None:
-        await asyncio.gather(
-            self.refresh_kalshi(self.current_niche if self.current_niche != "all" else None),
-            self.refresh_poly(self.current_niche if self.current_niche != "all" else None)
-        )
-        self.find_cross_platform_matches()
+        await self.refresh_markets()
 
-    def find_cross_platform_matches(self):
-        self.matches = FuzzyMatcher.find_matches(
-            list(self.k_markets.values()),
-            list(self.p_markets.values()),
-            threshold=0.4
-        )
-
-    def _extract_event_name(self, ticker: str, title: str) -> str:
-        if "-" in ticker:
-            parts = ticker.split("-")
-            if len(parts) >= 2:
-                base = parts[0] + "-" + parts[1]
-                return base[:15] if len(base) > 15 else base
-        if title:
-            words = title.split()
-            if len(words) >= 2:
-                return words[0][:15]
-        return ticker[:15]
-
-    async def refresh_kalshi(self, category=None):
-        table = self.query_one("#kalshi-table", DataTable)
+    async def refresh_markets(self):
+        table = self.query_one("#markets-table", DataTable)
         table.clear()
         
-        markets = await self.kalshi.get_active_markets(limit=200, category=category)
+        k_markets = await self.kalshi.get_active_markets(limit=100)
+        p_markets = await self.poly.get_active_markets(limit=100)
         
-        groups = defaultdict(list)
-        for m in markets:
-            event = self._extract_event_name(m.ticker, getattr(m, 'title', m.ticker))
-            groups[event].append(m)
+        self.k_markets = {m.ticker: m for m in k_markets}
         
-        self.k_markets = {m.ticker: m for m in markets}
+        p_questions = {}
+        for m in p_markets:
+            q = m.get('question', '')
+            p_questions[str(m.get('id'))] = q
         
-        for event_name, group_markets in sorted(groups.items()):
-            for m in group_markets:
-                title = getattr(m, 'title', m.ticker) or m.ticker
-                cat = MarketClassifier.classify(title) or "other"
+        self.p_markets = {str(m.get('id')): m for m in p_markets}
+        
+        matched = []
+        unmatched_k = []
+        
+        for km in k_markets:
+            k_title = getattr(km, 'title', km.ticker) or km.ticker
+            k_cat = MarketClassifier.classify(k_title)
+            
+            if self.current_niche != "all" and k_cat != self.current_niche:
+                continue
+            
+            p_id, p_title, score = FuzzyMatcher.find_best_match(k_title, p_questions, threshold=0.35)
+            
+            if p_id:
+                pm = self.p_markets.get(p_id)
+                if pm:
+                    matched.append({
+                        'k_ticker': km.ticker,
+                        'k_title': k_title,
+                        'k_cat': k_cat,
+                        'p_id': p_id,
+                        'p_title': p_title,
+                        'score': score
+                    })
+            else:
+                unmatched_k.append({
+                    'k_ticker': km.ticker,
+                    'k_title': k_title,
+                    'k_cat': k_cat
+                })
+        
+        self.matched_markets = matched[:30] + [{'k_ticker': m['k_ticker'], 'k_title': m['k_title'], 'k_cat': m['k_cat'], 'p_id': None, 'p_title': None, 'match_indicator': '○'} for m in unmatched_k[:30]]
+        
+        for match in self.matched_markets:
+            k_ticker = match.get('k_ticker')
+            k_title = match.get('k_title', '')
+            k_cat = match.get('k_cat', '?')
+            p_id = match.get('p_id')
+            p_title = match.get('p_title', '')
+            
+            km = self.k_markets.get(k_ticker)
+            k_price = 0
+            if km:
+                yes_bid = getattr(km, 'yes_bid', 0) or 0
+                yes_ask = getattr(km, 'yes_ask', 0) or 0
+                k_price = (yes_bid + yes_ask) / 2 / 100
+            
+            live_k = self.live_prices.get(f"k_{k_ticker}")
+            if live_k:
+                k_price = live_k
+            
+            p_price = 0
+            if p_id:
+                pm = self.p_markets.get(p_id)
+                if pm:
+                    prices = pm.get('outcomePrices', [])
+                    if isinstance(prices, list) and len(prices) > 0:
+                        p_price = float(prices[0])
                 
-                if self.current_niche != "all" and cat != self.current_niche:
-                    continue
-                
-                yes_bid = getattr(m, 'yes_bid', 0) or 0
-                yes_ask = getattr(m, 'yes_ask', 0) or 0
-                no_bid = getattr(m, 'no_bid', 100) or 100
-                no_ask = getattr(m, 'no_ask', 100) or 100
-                vol = getattr(m, 'volume', 0) or 0
-                
-                yes_price = (yes_bid + yes_ask) / 2 / 100 if (yes_bid or yes_ask) else 0
-                no_price = (no_bid + no_ask) / 2 / 100 if (no_bid or no_ask) else 0
-                
-                is_matched = any(match['kalshi'].ticker == m.ticker for match in self.matches)
-                marker = "🔗" if is_matched else ""
-                
-                table.add_row(
-                    cat[:3].upper(),
-                    event_name,
-                    (title[:25] + "..." if len(title) > 25 else title) + marker,
-                    f"{yes_price:.2f}" if yes_price > 0 else "--",
-                    f"{no_price:.2f}" if no_price > 0 else "--",
-                    f"{vol:,}",
-                    key=m.ticker
-                )
+                live_p = self.live_prices.get(f"p_{p_id}")
+                if live_p:
+                    p_price = live_p
+            
+            k_display = f"{k_price:.2f}" if k_price > 0 else "--"
+            p_display = f"{p_price:.2f}" if p_price > 0 else "--"
+            
+            indicator = "◉" if p_id else "○"
+            spread = abs(k_price - p_price) * 100 if k_price and p_price else 0
+            spread_str = f"{spread:.1f}%" if spread > 0 else "--"
+            
+            table.add_row(
+                indicator,
+                k_display,
+                f"[{k_cat[:1].upper() if k_cat else '?'}] {k_title[:35]}...",
+                p_display,
+                p_title[:35] + "..." if p_title and len(p_title) > 35 else p_title or "--",
+                spread_str,
+                key=k_ticker
+            )
 
-    async def refresh_poly(self, category=None):
-        table = self.query_one("#poly-table", DataTable)
-        table.clear()
+    async def on_data_table_row_selected(self, event):
+        row_key = event.row_key
         
-        poly_tag = None
-        if category == "politics": poly_tag = "Politics"
-        elif category == "sports": poly_tag = "Sports"
-        elif category == "financial": poly_tag = "Business"
+        for match in self.matched_markets:
+            if match.get('k_ticker') == row_key:
+                self.selected_row = match
+                self.update_detail_view()
+                break
+
+    def update_detail_view(self):
+        if not self.selected_row:
+            return
         
-        markets = await self.poly.get_active_markets(limit=200, tag=poly_tag)
+        k_title = self.query_one("#detail-k-title", Label)
+        k_price = self.query_one("#detail-k-price", Label)
+        p_title = self.query_one("#detail-p-title", Label)
+        p_price = self.query_one("#detail-p-price", Label)
+        spread_label = self.query_one("#detail-spread", Label)
         
-        groups = defaultdict(list)
-        for m in markets:
-            question = m.get('question', 'Unknown')
-            event = self._extract_event_name(m.get('id', 'unknown'), question)
-            groups[event].append(m)
+        k_ticker = self.selected_row.get('k_ticker')
+        k_title_text = self.selected_row.get('k_title', 'N/A')
+        p_title_text = self.selected_row.get('p_title', 'Select a matched market')
         
-        self.p_markets = {str(m.get('id')): m for m in markets}
+        k_price_val = self.live_prices.get(f"k_{k_ticker}", 0)
+        if not k_price_val:
+            km = self.k_markets.get(k_ticker)
+            if km:
+                yes_bid = getattr(km, 'yes_bid', 0) or 0
+                yes_ask = getattr(km, 'yes_ask', 0) or 0
+                k_price_val = (yes_bid + yes_ask) / 2 / 100
         
-        for event_name, group_markets in sorted(groups.items()):
-            for m in group_markets:
-                question = m.get('question', 'Unknown')
-                cat = MarketClassifier.classify(question) or "other"
-                
-                if self.current_niche != "all" and cat != self.current_niche:
-                    continue
-                
-                prices = m.get('outcomePrices', [])
-                if isinstance(prices, str):
-                    import json
-                    try:
-                        prices = json.loads(prices)
-                    except:
-                        prices = []
-                yes_price = float(prices[0]) if (isinstance(prices, (list, tuple)) and len(prices) > 0) else 0
-                no_price = float(prices[1]) if (isinstance(prices, (list, tuple)) and len(prices) > 1) else 0
-                vol = float(m.get('volume', 0) or 0)
-                
-                is_matched = any(match['polymarket'].get('id') == m.get('id') for match in self.matches)
-                marker = "🔗" if is_matched else ""
-                
-                table.add_row(
-                    cat[:3].upper(),
-                    event_name,
-                    (question[:25] + "..." if len(question) > 25 else question) + marker,
-                    f"{yes_price:.2f}",
-                    f"{no_price:.2f}",
-                    f"{int(vol):,}",
-                    key=str(m.get('id'))
-                )
+        p_id = self.selected_row.get('p_id')
+        p_price_val = 0
+        if p_id:
+            p_price_val = self.live_prices.get(f"p_{p_id}", 0)
+            if not p_price_val:
+                pm = self.p_markets.get(p_id)
+                if pm:
+                    prices = pm.get('outcomePrices', [])
+                    if isinstance(prices, list) and len(prices) > 0:
+                        p_price_val = float(prices[0])
+        
+        k_title.update(k_title_text[:50])
+        k_price.update(f"${k_price_val:.2f}" if k_price_val else "--")
+        
+        p_title.update(p_title_text[:50] if p_title_text else "--")
+        p_price.update(f"${p_price_val:.2f}" if p_price_val else "--")
+        
+        if k_price_val and p_price_val:
+            spread = abs(k_price_val - p_price_val) * 100
+            color = "green" if spread < 5 else "yellow" if spread < 15 else "red"
+            spread_label.update(f"{spread:.1f}%\nspread")
+        else:
+            spread_label.update("--\nselect match")
 
     async def action_filter(self, niche: str) -> None:
         self.current_niche = niche
         try:
-            self.query_one("#cat").update(niche.upper() if niche != "all" else "ALL MARKETS")
+            self.query_one("#cat").update(niche.upper() if niche != "all" else "ALL")
         except:
             pass
         await self.action_refresh()
@@ -329,6 +453,17 @@ class PolyTerminal(App):
     def action_next_theme(self) -> None:
         self.current_theme_idx = (self.current_theme_idx + 1) % len(THEMES)
         self.theme = THEMES[self.current_theme_idx]
+
+    async def action_toggle_live(self) -> None:
+        self.live_enabled = not self.live_enabled
+        if self.live_enabled:
+            await self.start_live()
+        else:
+            await self.stop_live()
+        self._update_status()
+
+    async def on_shutdown(self):
+        await self.stop_live()
 
 if __name__ == "__main__":
     app = PolyTerminal()
