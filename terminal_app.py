@@ -3,6 +3,7 @@ import asyncio
 import re
 import json
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Grid
@@ -15,6 +16,8 @@ from kalshi_client import KalshiClient
 from polymarket_client import PolymarketClient
 
 load_dotenv()
+
+MATCHES_FILE = Path.home() / ".openclaw" / "workspace" / "matches.json"
 
 THEMES = ["nord", "gruvbox", "tokyo-night", "textual-dark", "solarized-dark", "monokai", "dracula", "catppuccin-mocha"]
 
@@ -108,6 +111,7 @@ class PolyTerminal(App):
         Binding("t", "next_theme", "Theme"),
         Binding("g", "toggle_graph", "Graph"),
         Binding("escape", "close_graph", "Close"),
+        Binding("m", "load_matches", "Matches"),
     ]
 
     current_niche = reactive("all")
@@ -333,6 +337,41 @@ class PolyTerminal(App):
         self.show_graph = False
         self.query_one("#graph-pane").add_class("hidden")
         self.selected_market = None
+
+    def action_load_matches(self) -> None:
+        matches = self.load_matches()
+        if not matches:
+            self.notify("No matches file found. Run /match in OpenClaw first.")
+            return
+        
+        self.notify(f"Loaded {len(matches)} matched markets")
+        self.show_matches_panel(matches)
+
+    def load_matches(self) -> list:
+        if MATCHES_FILE.exists():
+            with open(MATCHES_FILE) as f:
+                return json.load(f)
+        return []
+
+    def show_matches_panel(self, matches: list) -> None:
+        graph_pane = self.query_one("#graph-pane")
+        graph_pane.remove_class("hidden")
+        
+        container = self.query_one("#graph-content", Vertical)
+        container.remove_children()
+        
+        container.mount(Static(f"\n[graph-title]Matched Markets ({len(matches)})[/graph-title]\n", classes="graph-title"))
+        
+        for match in matches[:15]:
+            k_title = match.get('kalshi_title', '')[:25]
+            p_title = match.get('polymarket_title', '')[:25]
+            conf = match.get('confidence', 0)
+            conf_color = "price-high" if conf >= 0.7 else "price-mid" if conf >= 0.5 else "price-low"
+            
+            container.mount(Static(
+                f"[accent]K:[/accent] {k_title}\n[warning]P:[/warning] {p_title}\n[{conf_color}]Conf: {conf:.2f}[/{conf_color}]\n",
+                classes="graph-title"
+            ))
 
     def show_graph_panel(self, market_data: dict) -> None:
         if not market_data:
