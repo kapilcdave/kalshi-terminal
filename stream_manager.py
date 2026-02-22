@@ -11,7 +11,7 @@ class StreamManager:
     POLY_WSS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
     def __init__(self, callback):
-        self.callback = callback # Function to call when data arrives
+        self.callback = callback
         self.tasks = []
         self.stop_event = asyncio.Event()
 
@@ -77,5 +77,4 @@ class StreamManager:
 
     async def subscribe_poly(self, token_ids):
         """Update Polymarket subscription."""
-        # In a real impl, we'd need to send a message to the existing WS connection
         pass
