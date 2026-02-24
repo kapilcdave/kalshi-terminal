@@ -1,248 +1,118 @@
-/* PredictionTerminal - Claude Code Aesthetic Theme */
+/* PredictionTerminal - Claude x Bloomberg Hybrid Aesthetic */
 
-/* Base colors - Dark physical look */
-$bg-primary: #0a0a0a;
-$bg-secondary: #141414;
-$bg-tertiary: #1e1e1e;
-$bg-surface: #0d0d0d;
+/* Primary Palette */
+$bg-primary: #1e1e2e;
+$bg-header: #11111b;
+$bg-panel: #181825;
+$text-main: #cdd6f4;
+$text-secondary: #bac2de;
+$text-muted: #6e738d;
+$border-color: #313244;
+$accent-yellow: #f9e2af;
+$accent-green: #a6e3a1;
+$accent-red: #f38ba8;
+$accent-blue: #89b4fa;
+$accent-cyan: #89dceb;
 
-$text-primary: #e0e0e0;
-$text-secondary: #a0a0a0;
-$text-muted: #606060;
-
-$accent-cyan: #00ffff;
-$accent-magenta: #ff00ff;
-$accent-green: #00ff00;
-$accent-orange: #ffaa00;
-$accent-red: #ff3333;
-$accent-yellow: #ffff00;
-
-$border-color: #2a2a2a;
-$border-active: #00ffff;
-
-/* Screen */
 PredictionTerminal {
     background: $bg-primary;
-    color: $text-primary;
-}
-
-/* Header */
-#header-container {
-    background: linear-gradient(90deg, #0d1117 0%, #161b22 50%, #0d1117 100%);
-    color: $text-primary;
-    dock: top;
-    height: 2;
-    border-bottom: 1px solid $accent-cyan;
-}
-
-#app-title {
-    text-style: bold;
-    color: $accent-cyan;
-    text-shadow: 0 0 10px $accent-cyan;
-}
-
-.separator {
-    color: $text-muted;
-    margin: 0 2;
-}
-
-#connection-status {
-    color: $accent-green;
-    text-style: bold;
-}
-
-#connection-status.disconnected {
-    color: $accent-red;
-}
-
-#latency, #balance {
-    color: $text-secondary;
-    margin-left: 3;
-}
-
-.clock {
-    width: 1fr;
-    text-align: right;
-    color: $accent-green;
+    color: $text-main;
     font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* Header Ticker */
+#ticker-container {
+    height: 1;
+    background: $bg-header;
+    color: $accent-cyan;
+    dock: top;
+    padding: 0 1;
+    border-bottom: solid $border-color;
+}
+
+#ticker-scroll {
+    color: $text-secondary;
+    text-style: bold;
 }
 
 /* Main Layout */
 #main-layout {
-    layout: grid;
-    grid-size: 2 2;
-    grid-columns: 120 1fr;
-    grid-rows: 1fr 1fr;
-    padding: 1;
+    layout: vertical;
+    padding: 0;
 }
 
-/* Area Spans */
-#table-area {
-    row-span: 2;
-}
-
-#graph-area {
-    row-span: 1;
-}
-
-#console-area {
-    row-span: 1;
-}
-
-/* Panes */
-.pane {
-    background: $bg-surface;
-    border: 1px solid $border-color;
-    margin: 1;
-}
-
-.pane-title {
-    background: linear-gradient(90deg, #1a1a2e 0%, #16213e 100%);
-    color: $accent-cyan;
-    text-style: bold;
-    text-transform: uppercase;
-    font-size: 12;
-    padding: 0 2;
-    height: 1;
-    border-bottom: 1px solid $border-color;
-}
-
-/* Market Table */
+/* Data Grid Area */
 #market-table {
-    height: 100%;
+    height: 1fr;
     background: $bg-primary;
     border: none;
+    margin: 0;
 }
 
-#market-table > .datatable--header {
-    background: $bg-secondary;
-    color: $accent-cyan;
+.datatable--header {
+    background: $bg-panel;
+    color: $accent-yellow;
     text-style: bold;
 }
 
-#market-table > .datatable--cursor {
-    background: rgba(0, 255, 255, 0.15);
-    color: $text-primary;
+.datatable--cursor {
+    background: rgba(137, 180, 250, 0.2); /* Subtle blue highlight */
+    color: $text-main;
 }
 
-#market-table > .datatable--row:hover {
-    background: rgba(0, 255, 255, 0.05);
+.datatable--row:hover {
+    background: rgba(137, 180, 250, 0.1);
 }
 
-/* Console / RichLog */
-#console-log {
-    height: 100%;
-    background: $bg-primary;
-    border: none;
-    font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
-    font-size: 12;
-}
-
-/* Sparkline */
-#price-sparkline {
-    height: 100%;
-    background: $bg-primary;
-    color: $accent-green;
-}
-
-#graph-details {
-    height: auto;
-    padding: 1 2;
-    color: $text-secondary;
-    font-family: monospace;
-    font-size: 11;
-    background: $bg-secondary;
-}
-
-/* Command Bar */
-#command-bar {
+/* Clawdbot Status Bar */
+#clawdbot-bar {
     height: 1;
-    dock: bottom;
-    background: $bg-secondary;
-    border-top: 1px solid $border-color;
-    padding: 0 2;
+    background: $bg-panel;
+    color: $accent-green;
+    padding: 0 1;
+    border-top: solid $border-color;
+    border-bottom: solid $border-color;
 }
 
-#command-input {
-    width: 100%;
-    background: transparent;
-    color: $accent-cyan;
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-    border: none;
+#clawdbot-logo {
+    color: $accent-red;
+    text-style: bold;
+    margin-right: 1;
 }
 
-#command-input:focus {
-    background: transparent;
-}
-
-#command-input::placeholder {
-    color: $text-muted;
-}
-
-/* Footer */
+/* Footer / Key Bindings */
 Footer {
-    background: $bg-secondary;
-    color: $text-secondary;
+    background: $bg-panel;
+    color: $text-muted;
+    border-top: solid $border-color;
+    height: 1;
 }
 
 Footer > .footer--key {
+    color: $accent-yellow;
+    text-style: bold;
+    background: transparent;
+}
+
+Footer > .footer--description {
+    color: $text-secondary;
+}
+
+/* Utility Classes for Cell Highlighting */
+.prob-high { color: $accent-green; }
+.prob-mid { color: $accent-yellow; }
+.prob-low { color: $accent-red; }
+.delta-pos { color: $accent-green; }
+.delta-neg { color: $accent-red; }
+
+/* Command Input */
+#command-bar {
+    height: 1;
+    dock: bottom;
+}
+
+#command-input {
+    background: $bg-header;
     color: $accent-cyan;
-}
-
-Footer > .footer--key:hover {
-    background: $accent-cyan;
-    color: $bg-primary;
-}
-
-/* DataTable specific cell colors */
-.datatable--cell {
-    font-family: "JetBrains Mono", "Fira Code", monospace;
-}
-
-/* Positive/Negative delta colors */
-.delta-positive {
-    color: $accent-green;
-}
-
-.delta-negative {
-    color: $accent-red;
-}
-
-/* Neon glow effects */
-.neon-cyan {
-    text-shadow: 0 0 5px $accent-cyan, 0 0 10px $accent-cyan;
-}
-
-.neon-magenta {
-    text-shadow: 0 0 5px $accent-magenta, 0 0 10px $accent-magenta;
-}
-
-.neon-green {
-    text-shadow: 0 0 5px $accent-green, 0 0 10px $accent-green;
-}
-
-/* Scrollbar styling */
-ScrollableContainer::-webkit-scrollbar {
-    width: 8;
-    background: $bg-secondary;
-}
-
-ScrollableContainer::-webkit-scrollbar-thumb {
-    background: $border-color;
-    border-radius: 4;
-}
-
-ScrollableContainer::-webkit-scrollbar-thumb:hover {
-    background: $accent-cyan;
-}
-
-/* Focus states */
-Button:focus, Input:focus {
-    border: 1px solid $accent-cyan;
-}
-
-/* Selection */
-::selection {
-    background: rgba(0, 255, 255, 0.3);
-    color: $text-primary;
+    border: none;
 }
