@@ -21,9 +21,8 @@ class ConnectionStatus:
     latency_ms: float = 0.0
 
 
-class LiveEngine:
-    KALSHI_WSS_DEMO = "wss://demo-api.kalshi.co/trade-api/v2/stream"
-    KALSHI_WSS_PROD = "wss://api.kalshi.com/trade-api/v2/stream"
+    KALSHI_WSS_DEMO = "wss://demo-api.kalshi.co/trade-api/v2/ws"
+    KALSHI_WSS_PROD = "wss://api.kalshi.com/trade-api/v2/ws"
     POLY_WSS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     
     POLY_API = "https://clob.polymarket.com"
@@ -49,14 +48,17 @@ class LiveEngine:
         
         self._status_callbacks: List[Callable] = []
         self._price_callbacks: List[Callable] = []
+        self._raw_callbacks: List[Callable] = []
         
         self._http_client: Optional[httpx.AsyncClient] = None
         
     def add_status_callback(self, callback: Callable):
         self._status_callbacks.append(callback)
         
-    def add_price_callback(self, callback: Callable):
         self._price_callbacks.append(callback)
+        
+    def add_raw_callback(self, callback: Callable):
+        self._raw_callbacks.append(callback)
         
     async def _notify_status(self, status: ConnectionStatus):
         for cb in self._status_callbacks:
@@ -75,6 +77,16 @@ class LiveEngine:
                     await cb(platform, data)
                 else:
                     cb(platform, data)
+            except Exception:
+                pass
+                
+    async def _notify_raw(self, platform: str, message: str):
+        for cb in self._raw_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(cb):
+                    await cb(platform, message)
+                else:
+                    cb(platform, message)
             except Exception:
                 pass
                 
@@ -119,9 +131,13 @@ class LiveEngine:
             ).decode()
             headers["Authorization"] = f"Basic {auth_value}"
         
+        kwargs = {}
+        if headers:
+            kwargs["additional_headers"] = headers
+            
         while self._running:
             try:
-                async with websockets.connect(url, extra_headers=headers if headers else None) as ws:
+                async with websockets.connect(url, **kwargs) as ws:
                     self.kalshi_status.connected = True
                     self.kalshi_status.last_heartbeat = time.time()
                     await self._notify_status(self.kalshi_status)
@@ -137,14 +153,23 @@ class LiveEngine:
                             break
                             
                         try:
+                            # Forward raw message
+                            await self._notify_raw("kalshi", message)
+                            
                             data = json.loads(message)
                             self.kalshi_status.messages_received += 1
                             
-                            await self._process_kalshi_message(data)
-                            await self._notify_price("kalshi", data)
+                            if isinstance(data, list):
+                                for item in data:
+                                    await self._process_kalshi_message(item)
+                                    await self._notify_price("kalshi", item)
+                            else:
+                                await self._process_kalshi_message(data)
+                                await self._notify_price("kalshi", data)
                             
-                        except json.JSONDecodeError:
-                            continue
+                        except Exception as e:
+                            # Catch all to prevent disconnect on bad message format
+                            pass
                             
             except asyncio.CancelledError:
                 break
@@ -189,12 +214,32 @@ class LiveEngine:
                     self.poly_status.connected = True
                     self.poly_status.last_heartbeat = time.time()
                     await self._notify_status(self.poly_status)
-                    
+                    # Fetch some active Polymarket tokens to subscribe to
+                    token_ids = []
+                    if self._http_client:
+                        try:
+                            response = await self._http_client.get(
+                                f"{self.POLY_GAMMA_API}/markets",
+                                params={"active": "true", "limit": 100}
+                            )
+                            if response.status_code == 200:
+                                markets = response.json()
+                                for m in markets:
+                                    if m.get("tokens"):
+                                        token_ids.append(m["tokens"][0].get("token_id"))
+                        except Exception as e:
+                            logger.error(f"Failed to fetch Poly markets: {e}")
+                            
+                    if not token_ids:
+                        # Fallback static token for testing if fetch fails (e.g. some active token id)
+                        token_ids = ["59441160358925232801458852870404391219089069695648877112104523996766487955513"] # Trump 2024 token id approx
+                            
                     sub_msg = {
                         "type": "market",
                         "operation": "subscribe",
-                        "assets_ids": []
+                        "asset_ids": token_ids[:100]  # Subscribe to up to 100 active tokens
                     }
+                    logger.debug(f"Subscribing to Poly with {len(token_ids[:100])} tokens.")
                     await ws.send(json.dumps(sub_msg))
                     
                     async for message in ws:
@@ -202,14 +247,22 @@ class LiveEngine:
                             break
                             
                         try:
+                            # Forward raw message
+                            await self._notify_raw("polymarket", message)
+                            
                             data = json.loads(message)
                             self.poly_status.messages_received += 1
                             
-                            await self._process_poly_message(data)
-                            await self._notify_price("polymarket", data)
+                            if isinstance(data, list):
+                                for item in data:
+                                    await self._process_poly_message(item)
+                                    await self._notify_price("polymarket", item)
+                            else:
+                                await self._process_poly_message(data)
+                                await self._notify_price("polymarket", data)
                             
-                        except json.JSONDecodeError:
-                            continue
+                        except Exception as e:
+                            pass
                             
             except asyncio.CancelledError:
                 break

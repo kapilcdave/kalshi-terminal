@@ -1,18 +1,16 @@
-/* PredictionTerminal - Claude x Bloomberg Hybrid Aesthetic */
+/* Raw Websocket Viewer Aesthetic */
 
-/* Primary Palette */
 $bg-primary: #1e1e2e;
 $bg-header: #11111b;
 $bg-panel: #181825;
 $text-main: #cdd6f4;
-$text-secondary: #bac2de;
 $text-muted: #6e738d;
 $border-color: #313244;
-$accent-yellow: #f9e2af;
 $accent-green: #a6e3a1;
 $accent-red: #f38ba8;
-$accent-blue: #89b4fa;
 $accent-cyan: #89dceb;
+$kalshi-color: #f9e2af; /* Yellowish */
+$poly-color: #cba6f7; /* Purplish */
 
 PredictionTerminal {
     background: $bg-primary;
@@ -20,51 +18,48 @@ PredictionTerminal {
     font-family: "JetBrains Mono", "Fira Code", monospace;
 }
 
-/* Header Ticker */
 #ticker-container {
     height: 1;
     background: $bg-header;
     color: $accent-cyan;
     dock: top;
-    padding: 0 1;
+    content-align: center middle;
     border-bottom: solid $border-color;
-}
-
-#ticker-scroll {
-    color: $text-secondary;
     text-style: bold;
 }
 
-/* Main Layout */
-#main-layout {
-    layout: vertical;
-    padding: 0;
-}
-
-/* Data Grid Area */
-#market-table {
+#logs-container {
     height: 1fr;
-    background: $bg-primary;
-    border: none;
-    margin: 0;
+    layout: horizontal;
 }
 
-.datatable--header {
+.log-pane {
+    width: 1fr;
+    height: 100%;
+    border: solid $border-color;
+    margin: 0 1;
     background: $bg-panel;
-    color: $accent-yellow;
+}
+
+.pane-title {
+    height: 1;
+    content-align: center middle;
     text-style: bold;
+    border-bottom: solid $border-color;
+    background: $bg-header;
 }
 
-.datatable--cursor {
-    background: rgba(137, 180, 250, 0.2); /* Subtle blue highlight */
-    color: $text-main;
+.kalshi-title { color: $kalshi-color; }
+.poly-title { color: $poly-color; }
+
+#kalshi-log, #poly-log {
+    height: 1fr;
+    padding: 1;
+    background: transparent;
+    scrollbar-color: $border-color $bg-panel;
+    overflow-y: scroll;
 }
 
-.datatable--row:hover {
-    background: rgba(137, 180, 250, 0.1);
-}
-
-/* Clawdbot Status Bar */
 #clawdbot-bar {
     height: 1;
     background: $bg-panel;
@@ -80,7 +75,6 @@ PredictionTerminal {
     margin-right: 1;
 }
 
-/* Footer / Key Bindings */
 Footer {
     background: $bg-panel;
     color: $text-muted;
@@ -89,30 +83,7 @@ Footer {
 }
 
 Footer > .footer--key {
-    color: $accent-yellow;
+    color: $accent-cyan;
     text-style: bold;
     background: transparent;
-}
-
-Footer > .footer--description {
-    color: $text-secondary;
-}
-
-/* Utility Classes for Cell Highlighting */
-.prob-high { color: $accent-green; }
-.prob-mid { color: $accent-yellow; }
-.prob-low { color: $accent-red; }
-.delta-pos { color: $accent-green; }
-.delta-neg { color: $accent-red; }
-
-/* Command Input */
-#command-bar {
-    height: 1;
-    dock: bottom;
-}
-
-#command-input {
-    background: $bg-header;
-    color: $accent-cyan;
-    border: none;
 }
