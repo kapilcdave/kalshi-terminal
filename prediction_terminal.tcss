@@ -70,9 +70,23 @@ PredictionTerminal {
 /* Main Layout */
 #main-layout {
     layout: grid;
-    grid-size: 3 2;
-    grid-columns: 2fr 1fr 1fr;
-    grid-rows: 1fr 1;
+    grid-size: 2 2;
+    grid-columns: 120 1fr;
+    grid-rows: 1fr 1fr;
+    padding: 1;
+}
+
+/* Area Spans */
+#table-area {
+    row-span: 2;
+}
+
+#graph-area {
+    row-span: 1;
+}
+
+#console-area {
+    row-span: 1;
 }
 
 /* Panes */

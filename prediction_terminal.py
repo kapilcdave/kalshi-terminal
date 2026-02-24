@@ -1,6 +1,7 @@
 import os
 import asyncio
 import random
+import time
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -28,17 +29,13 @@ CSS_PATH = "prediction_terminal.tcss"
 
 
 class TerminalHeader(Static):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._update_task = None
-        
     def compose(self) -> ComposeResult:
         with Horizontal(id="header-container"):
             yield Label("[P] PredictionTerminal", id="app-title")
             yield Label("|", classes="separator")
             yield Label("● LIVE", id="connection-status", classes="status-connected")
             yield Label("", id="latency")
-            yield Label("", id="balance")
+            yield Label("", id="poly-balance")
             yield Label("", id="clock", classes="clock")
 
 
@@ -133,9 +130,9 @@ class PredictionTerminal(App):
     
     #main-layout {
         layout: grid;
-        grid-size: 3 2;
-        grid-columns: 2fr 1fr 1fr;
-        grid-rows: 1fr 80;
+        grid-size: 2 2;
+        grid-columns: 1fr 1fr;
+        grid-rows: 1fr 1fr;
     }
     
     .pane {
@@ -225,7 +222,7 @@ class PredictionTerminal(App):
             store=self.store,
             kalshi_env=os.getenv("KALSHI_ENV", "demo"),
             kalshi_api_key=os.getenv("KALSHI_API_KEY"),
-            kalshi_private_key=os.getenv("KALSHI_PRIVATE_KEY")
+            kalshi_private_key=self.kalshi.private_key_content if not self.kalshi.use_mock else None
         )
         
         self.agent = AgentManager(
@@ -239,14 +236,14 @@ class PredictionTerminal(App):
         yield TerminalHeader()
         
         with Container(id="main-layout"):
-            with Vertical(classes="pane"):
+            with Vertical(classes="pane", id="table-area"):
                 yield MarketTablePane()
                 
-            with Vertical(id="console-split", classes="pane"):
-                yield ConsolePane()
-                
-            with Vertical(classes="pane"):
+            with Vertical(classes="pane", id="graph-area"):
                 yield GraphPane()
+
+            with Vertical(classes="pane", id="console-area"):
+                yield ConsolePane()
                 
         with Horizontal(id="command-bar"):
             yield CommandInput(id="command-input")
@@ -259,11 +256,16 @@ class PredictionTerminal(App):
         await self._setup_console()
         
         self.set_interval(1, self._update_clock)
+        self.set_interval(60, self._update_balance) # Update balance every minute
         
         await self.engine.start()
         await self.agent.start()
         
+        # Focus the table immediately for keyboard control
+        self.query_one("#market-table").focus()
+        
         await self.action_refresh()
+        await self._update_balance()
         
     async def _setup_tables(self):
         table = self.query_one("#market-table", DataTable)
@@ -272,7 +274,8 @@ class PredictionTerminal(App):
         )
         table.cursor_type = "row"
         
-        table.on_row_selected = self._on_row_selected
+        # Use reactive highlight for instant graph updates
+        table.on_row_highlighted = self._on_row_highlighted
         
     async def _setup_subscriptions(self):
         self.store.subscribe(self._on_market_update)
@@ -368,14 +371,51 @@ class PredictionTerminal(App):
         for key in existing_rows - current_rows:
             table.remove_row(key)
             
-    def _on_row_selected(self, event):
-        table = self.query_one("#market-table", DataTable)
-        row_key = table.cursor_row
-        
+    def _on_row_highlighted(self, event):
+        row_key = event.row_key
         if row_key is not None:
             market = self.store.get_market(str(row_key))
             if market:
+                # Trigger graph update and background history fetch
                 self._update_graph(market)
+                self._fetch_market_history(market)
+                
+    @work(exclusive=True)
+    async def _fetch_market_history(self, market: UnifiedMarket):
+        """Background worker to fetch historical data for the selected market."""
+        # fetch from Polymarket
+        if market.poly_token_id:
+            history = await self.poly.get_prices_history(market.poly_token_id)
+            if history:
+                points = []
+                for entry in history:
+                    # entry has 'price' and 't' (timestamp in seconds)
+                    points.append({
+                        'price': float(entry.get('p', 0)),
+                        'timestamp': int(entry.get('t', 0))
+                    })
+                await self.store.add_history_points(market.id, points, 'poly')
+        
+        # fetch from Kalshi
+        if market.kalshi_ticker:
+            now = int(time.time())
+            start = now - (6 * 3600) # Last 6 hours
+            candles = await self.kalshi.get_market_candlesticks(market.kalshi_ticker, start, now, period=60)
+            if candles:
+                points = []
+                for c in candles:
+                    points.append({
+                        'price': c.close,
+                        'timestamp': c.start_period_ts
+                    })
+                await self.store.add_history_points(market.id, points, 'kalshi')
+        
+        # Refresh graph if still on the same market
+        table = self.query_one("#market-table", DataTable)
+        if table.cursor_row is not None:
+             highlighted_key = table.get_row_key_at(table.cursor_row)
+             if str(highlighted_key) == market.id:
+                 self.call_from_thread(self._update_graph, market)
                 
     def _update_graph(self, market: UnifiedMarket):
         history = self.store.get_price_history(market.id)
@@ -404,6 +444,16 @@ class PredictionTerminal(App):
             f"{market.event_name[:40]} | K: {market.kalshi_price:.2f} | P: {market.poly_price:.2f}"
         )
         
+    async def _update_balance(self):
+        try:
+            balance = await self.poly.get_balance()
+            if balance > 0:
+                self.query_one("#poly-balance", Label).update(f"Poly Balance: ${balance:,.2f}")
+            else:
+                self.query_one("#poly-balance", Label).update("")
+        except Exception:
+            pass
+
     def _update_clock(self):
         try:
             clock = self.query_one("#clock", Label)

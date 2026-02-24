@@ -141,6 +141,43 @@ class UnifiedStore:
         
     def get_price_history(self, market_id: str) -> List[PricePoint]:
         return self._price_history.get(market_id, [])
+
+    async def add_history_points(self, market_id: str, points: List[Dict[str, Any]], platform: str):
+        """
+        Batch add historical price points.
+        points should have 'price' and 'timestamp'
+        """
+        async with self._lock:
+            for p in points:
+                ts = p.get('timestamp')
+                price = p.get('price')
+                
+                if ts is None or price is None:
+                    continue
+                
+                # Check if we already have a point close to this timestamp
+                found = False
+                for existing in self._price_history[market_id]:
+                    if abs(existing.timestamp - ts) < 60: # Within 1 minute
+                        if platform == 'kalshi':
+                            existing.kalshi_price = price
+                        else:
+                            existing.poly_price = price
+                        found = True
+                        break
+                
+                if not found:
+                    new_p = PricePoint(timestamp=ts)
+                    if platform == 'kalshi':
+                        new_p.kalshi_price = price
+                    else:
+                        new_p.poly_price = price
+                    self._price_history[market_id].append(new_p)
+            
+            # Sort and trim
+            self._price_history[market_id].sort(key=lambda x: x.timestamp)
+            if len(self._price_history[market_id]) > self.max_history_size:
+                self._price_history[market_id] = self._price_history[market_id][-self.max_history_size:]
         
     async def rebuild_from_feeds(
         self, 
