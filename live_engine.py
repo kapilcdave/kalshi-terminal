@@ -21,6 +21,7 @@ class ConnectionStatus:
     latency_ms: float = 0.0
 
 
+class LiveEngine:
     KALSHI_WSS_DEMO = "wss://demo-api.kalshi.co/trade-api/v2/ws"
     KALSHI_WSS_PROD = "wss://api.kalshi.com/trade-api/v2/ws"
     POLY_WSS = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -237,7 +238,7 @@ class ConnectionStatus:
                     sub_msg = {
                         "type": "market",
                         "operation": "subscribe",
-                        "asset_ids": token_ids[:100]  # Subscribe to up to 100 active tokens
+                        "assets_ids": token_ids[:100]  # Subscribe to up to 100 active tokens
                     }
                     logger.debug(f"Subscribing to Poly with {len(token_ids[:100])} tokens.")
                     await ws.send(json.dumps(sub_msg))

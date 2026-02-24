@@ -11,7 +11,7 @@ import httpx
 
 logger = logging.getLogger("AgentManager")
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class AgentState(Enum):
     IDLE = "idle"
@@ -43,11 +43,11 @@ class AgentManager:
         self,
         store,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "google/gemini-2.0-flash-lite-001",
         max_tokens: int = 1024
     ):
         self.store = store
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
         
@@ -192,7 +192,7 @@ Returns detailed analysis of the arbitrage potential.""",
                 
     async def process_message(self, user_message: str) -> str:
         if not self.api_key:
-            return "Error: Anthropic API key not configured. Set ANTHROPIC_API_KEY in .env"
+            return "Error: OpenRouter API key not configured. Set OPENROUTER_API_KEY in .env"
             
         self.context.state = AgentState.THINKING
         
@@ -206,7 +206,7 @@ Returns detailed analysis of the arbitrage potential.""",
         ]
         
         try:
-            response = await self._call_anthropic(messages)
+            response = await self._call_openrouter(messages)
             
             self.context.state = AgentState.ACTIVE
             self.context.last_analysis = response
@@ -221,7 +221,7 @@ Returns detailed analysis of the arbitrage potential.""",
             await self._notify_output(error_msg, "error")
             return error_msg
             
-    async def _call_anthropic(self, messages: List[Message]) -> str:
+    async def _call_openrouter(self, messages: List[Message]) -> str:
         system_prompt = """You are Clawdbot, an AI assistant for a prediction market terminal that 
 monitors prices from both Kalshi and Polymarket. You help users analyze market data, 
 spot arbitrage opportunities, and understand price movements.
@@ -232,27 +232,31 @@ use the get_market_data tool to fetch current prices and analyze opportunities.
 Be concise, analytical, and focused on actionable insights."""
         
         headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": "https://github.com/kapilcdave/kalshi",
+            "X-Title": "Kalshi Terminal",
+            "Content-Type": "application/json"
         }
         
+        formatted_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            msg = {"role": m.role, "content": m.content}
+            if m.tool_call_id:
+                msg["tool_call_id"] = m.tool_call_id
+            formatted_messages.append(msg)
+            
         payload = {
             "model": self.model,
+            "messages": formatted_messages,
             "max_tokens": self.max_tokens,
-            "system": system_prompt,
-            "messages": [
-                {
-                    "role": m.role,
-                    "content": m.content
-                }
-                for m in messages
-            ],
             "tools": [
                 {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.input_schema
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema
+                    }
                 }
                 for t in self._tools
             ]
@@ -260,7 +264,7 @@ Be concise, analytical, and focused on actionable insights."""
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                ANTHROPIC_API_URL,
+                OPENROUTER_API_URL,
                 headers=headers,
                 json=payload
             )
@@ -269,26 +273,36 @@ Be concise, analytical, and focused on actionable insights."""
                 raise Exception(f"API error: {response.status_code} - {response.text}")
                 
             data = response.json()
+            choice = data["choices"][0]["message"]
             
-            if "content" in data:
-                for block in data["content"]:
-                    if block.get("type") == "text":
-                        return block["text"]
-                    elif block.get("type") == "tool_use":
-                        tool_result = await self._handle_tool_call(block)
-                        messages.append(Message(
-                            role="user",
-                            content=tool_result,
-                            tool_call_id=block.get("id")
-                        ))
-                        
-                        return await self._call_anthropic(messages)
-                        
-            return data.get("text", "No response")
+            if choice.get("tool_calls"):
+                for tool_call in choice["tool_calls"]:
+                    tool_result = await self._handle_tool_call(tool_call["function"])
+                    messages.append(Message(
+                        role="assistant",
+                        content=choice.get("content") or "",
+                        tool_calls=choice.get("tool_calls")
+                    ))
+                    messages.append(Message(
+                        role="tool",
+                        content=tool_result,
+                        tool_call_id=tool_call["id"]
+                    ))
+                    
+                    return await self._call_openrouter(messages)
+            
+            return choice.get("content", "No response")
             
     async def _handle_tool_call(self, tool_block: Dict) -> str:
-        tool_name = tool_block.get("name", "")
-        tool_input = tool_block.get("input", {})
+        if "function" in tool_block:
+            tool_name = tool_block.get("function", {}).get("name", "")
+            tool_input = tool_block.get("function", {}).get("arguments", {})
+            if isinstance(tool_input, str):
+                import json
+                tool_input = json.loads(tool_input)
+        else:
+            tool_name = tool_block.get("name", "")
+            tool_input = tool_block.get("input", {})
         
         if tool_name == "get_market_data":
             return await self._tool_get_market_data(tool_input)
