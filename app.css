@@ -1,0 +1,108 @@
+/* Prediction Market Terminal - Claude Code + Bloomberg Style */
+
+$bg-primary: #1e1e2e;
+$bg-secondary: #181825;
+$bg-surface: #1e1e2e;
+$bg-panel: #232330;
+
+$text-primary: #cdd6f4;
+$text-secondary: #a6adc8;
+$text-muted: #6c7086;
+
+$border-color: #313244;
+$border-active: #45475a;
+
+$accent-cyan: #89dceb;
+$accent-green: #a6e3a1;
+$accent-yellow: #f9e2af;
+$accent-red: #f38ba8;
+$accent-mauve: #cba6f7;
+$accent-peach: #fab387;
+
+PredictionMarketApp {
+    background: $bg-primary;
+    color: $text-primary;
+}
+
+/* Header Ticker */
+#ticker {
+    dock: top;
+    height: 1;
+    background: $bg-secondary;
+    color: $text-primary;
+    text-style: bold;
+    padding: 0 2;
+    border-bottom: solid $border-color;
+}
+
+/* Main Container */
+#main {
+    height: 1fr;
+}
+
+/* Market Data Table */
+#market-table {
+    height: 100%;
+    background: $bg-primary;
+    border: none;
+}
+
+#market-table > .datatable--header {
+    background: $bg-secondary;
+    color: $accent-cyan;
+    text-style: bold;
+}
+
+#market-table > .datatable--header-cell {
+    border-bottom: solid $border-color;
+}
+
+#market-table > .datatable--cursor {
+    background: rgba(137, 220, 235, 0.15);
+}
+
+#market-table > .datatable--row:hover {
+    background: rgba(137, 220, 235, 0.05);
+}
+
+/* Clawdbot Status Bar */
+#clawdbot-status {
+    dock: bottom;
+    height: 1;
+    background: $bg-panel;
+    color: $text-secondary;
+    padding: 0 2;
+    border-top: solid $border-color;
+}
+
+/* Command Bar */
+#command-bar {
+    dock: bottom;
+    height: 1;
+    background: $bg-secondary;
+    border-top: solid $border-color;
+    padding: 0 2;
+}
+
+#command-bar Input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: $accent-cyan;
+}
+
+/* Footer */
+Footer {
+    background: $bg-secondary;
+    color: $text-secondary;
+}
+
+Footer > .footer--key {
+    color: $accent-peach;
+    text-style: bold;
+}
+
+Footer > .footer--key:hover {
+    background: $accent-peach;
+    color: $bg-primary;
+}

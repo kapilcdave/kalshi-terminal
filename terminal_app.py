@@ -1,424 +1,276 @@
-import os
-import asyncio
-import re
 import json
-from datetime import datetime
+import asyncio
 from pathlib import Path
-from dotenv import load_dotenv
+from datetime import datetime
+from typing import Optional
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, ScrollableContainer, Grid
-from textual.widgets import Footer, DataTable, Static, Label
-from textual.reactive import reactive
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import DataTable, Static, Input, Footer, Header
 from textual.binding import Binding
 from textual import events
-
-from kalshi_client import KalshiClient
-from polymarket_client import PolymarketClient
-
-load_dotenv()
+from textual.message import Message
 
 MATCHES_FILE = Path.home() / ".openclaw" / "workspace" / "matches.json"
 
-THEMES = ["nord", "gruvbox", "tokyo-night", "textual-dark", "solarized-dark", "monokai", "dracula", "catppuccin-mocha"]
 
-class MarketClassifier:
-    CATEGORIES = {
-        "politics": [r"\btrump\b", r"\bbiden\b", r"\bpresident\b", r"\belection\b", r"\bcongress\b", r"\bsenate\b", r"\bhouse\b", r"\bdemocrat\b", r"\brepublican\b", r"\bgov\b", r"\bsenator\b", r"\brussia\b", r"\bukraine\b", r"\bisrael\b", r"\bchina\b", r"\biran\b"],
-        "sports": [r"\bnba\b", r"\bnfl\b", r"\bmlb\b", r"\bnhl\b", r"\bcollege\b", r"\bfootball\b", r"\bbasketball\b", r"\bbaseball\b", r"\bhockey\b", r"\bsoccer\b", r"\bgolf\b", r"\btennis\b", r"\bATP\b", r"\bNCAAB\b", r"\b3pt\b", r"\bgame\b", r"\bwin\b", r"\bplayoff\b"],
-        "financial": [r"\bfed\b", r"\binterest\b", r"\brate\b", r"\binflation\b", r"\bgdp\b", r"\bmarket\b", r"\bstock\b", r"\bbitcoin\b", r"\bbtc\b", r"\bcrypto\b", r"\brecession\b", r"\beconomy\b", r"\bdoge\b", r"\bbudget\b", r"\brevenue\b"],
-        "entertainment": [r"\boscar\b", r"\bgrammy\b", r"\bemmy\b", r"\bmovie\b", r"\bnetflix\b", r"\bdisney\b", r"\bgta\b", r"\balbum\b", r"\bmusic\b"],
-    }
+class MarketData:
+    def __init__(self, event: str, kalshi_prob: float, poly_prob: float, 
+                 volume: int, category: str = "other"):
+        self.event = event
+        self.kalshi_prob = kalshi_prob
+        self.poly_prob = poly_prob
+        self.volume = volume
+        self.category = category
+        
+    @property
+    def delta_pct(self) -> float:
+        if self.kalshi_prob == 0:
+            return 0.0
+        return ((self.poly_prob - self.kalshi_prob) / self.kalshi_prob) * 100
     
-    CAT_LABELS = {"politics": "POL", "sports": "SPO", "financial": "FIN", "entertainment": "ENT"}
-    
-    @classmethod
-    def classify(cls, text: str) -> str | None:
-        text = text.lower()
-        for category, patterns in cls.CATEGORIES.items():
-            for pattern in patterns:
-                if re.search(pattern, text, re.IGNORECASE):
-                    return category
-        return None
+    def format_volume(self) -> str:
+        if self.volume >= 1_000_000:
+            return f"{self.volume / 1_000_000:.1f}M"
+        elif self.volume >= 1_000:
+            return f"{self.volume / 1_000:.1f}K"
+        return str(self.volume)
 
-    @classmethod
-    def label(cls, cat: str) -> str:
-        return cls.CAT_LABELS.get(cat, "OTH")
 
-class Header(Static):
+class HeaderTicker(Static):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
-    def on_mount(self):
-        self.update(" POLYTERMINAL ")
-
-class MarketCard(Static):
-    def __init__(self, title: str, price: float, category: str, platform: str, market_data: dict = None, content: str = "", **kwargs):
-        super().__init__(content, **kwargs)
-        self.market_title = title
-        self.market_price = price
-        self.market_category = category
-        self.platform = platform
-        self.market_data = market_data or {}
-        self.is_selected = False
-
-    def get_color(self, price: float) -> str:
-        if price >= 0.75:
-            return "high"
-        elif price <= 0.15:
-            return "low"
-        elif 0.40 <= price <= 0.60:
-            return "mid"
-        return "default"
-
-    def render(self) -> str:
-        cat_label = MarketClassifier.label(self.market_category)
-        color = self.get_color(self.market_price)
-        price_str = f"{self.market_price:.2f}"
-        title = self.market_title[:28] + "..." if len(self.market_title) > 28 else self.market_title
-        sel = "▶" if self.is_selected else " "
-        return f"{sel}[{cat_label}] {title:<30} {price_str:>5}"
-
-    def on_click(self) -> None:
-        self.is_selected = not self.is_selected
-        self.refresh()
-        self.app.selected_market = self.market_data
-        self.app.show_graph_panel(self.market_data)
-
-class Ticker(Static):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        self._ticker_data = [
+            {"symbol": "SPX", "price": 5234.5, "change": -0.12},
+            {"symbol": "BTC", "price": 67890.0, "change": 2.34},
+            {"symbol": "DXY", "price": 104.2, "change": -0.05},
+            {"symbol": "NDX", "price": 18500.0, "change": 0.45},
+            {"symbol": "ETH", "price": 3450.0, "change": 1.87},
+        ]
         self._ticks = 0
-
+        
     def on_mount(self):
         self.update_ticker()
-        self.set_interval(5, self.update_ticker)
-
+        self.set_interval(3, self.update_ticker)
+        
     def update_ticker(self):
-        self._ticks = (self._ticks + 1) % 4
-        ticks = ["▓▒░ ", "░▓▒ ", "▒░▓ ", "▓▒░ "]
-        now = datetime.now().strftime("%H:%M:%S")
-        self.update(f" POLYTERMINAL | {now} {ticks[self._ticks]}")
+        self._ticks = (self._ticks + 1) % len(self._ticker_data)
+        parts = []
+        for item in self._ticker_data:
+            symbol = item["symbol"]
+            price = item["price"]
+            change = item["change"]
+            change_str = f"+{change:.2f}%" if change >= 0 else f"{change:.2f}%"
+            color = "#a6e3a1" if change >= 0 else "#f38ba8"
+            parts.append(f"[bold]{symbol}[/bold] @ {price:,.0f}  [{color}]{change_str}[/{color}]")
+        
+        self.update("  " + "  │  ".join(parts) + "  ")
 
-class PolyTerminal(App):
+
+class MarketDataTable(DataTable):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.add_columns(
+            ("Event", "event"),
+            ("Kalshi", "kalshi"),
+            ("Poly", "poly"),
+            ("Δ%", "delta"),
+            ("Volume", "volume")
+        )
+        self.cursor_type = "row"
+        
+    def get_probability_color(self, prob: float) -> str:
+        if prob >= 0.75:
+            return "#a6e3a1"
+        elif prob <= 0.15:
+            return "#f38ba8"
+        elif 0.40 <= prob <= 0.60:
+            return "#f9e2af"
+        return "#cdd6f4"
+    
+    def get_delta_color(self, delta: float) -> str:
+        if delta > 0:
+            return "#a6e3a1"
+        elif delta < 0:
+            return "#f38ba8"
+        return "#cdd6f4"
+
+
+class CommandBar(Static):
+    class CommandSubmitted(Message):
+        def __init__(self, command: str) -> None:
+            super().__init__()
+            self.command = command
+            
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._input = Input(
+            placeholder="Type /help for commands...",
+            classes="command-input"
+        )
+        
+    def compose(self) -> ComposeResult:
+        yield self._input
+        
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.value:
+            self.post_message(self.CommandSubmitted(event.input.value))
+            self._input.value = ""
+    
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self._input.value = ""
+            self._input.focus(False)
+
+
+class ClawdbotStatus(Static):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._message = "Initialized and monitoring markets..."
+        
+    def on_mount(self):
+        self.update_status()
+        
+    def update_status(self, message: Optional[str] = None):
+        if message:
+            self._message = message
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.update(f" 🦞 [bold cyan]Clawdbot v1.0[/bold cyan] │ {timestamp} │ {self._message}")
+
+
+class PredictionMarketApp(App):
+    CSS_PATH = "app.css"
+    
     BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("f1", "filter('financial')", "Finance"),
-        Binding("f2", "filter('politics')", "Politics"),
-        Binding("f3", "filter('sports')", "Sports"),
-        Binding("f4", "filter('entertainment')", "Entertainment"),
-        Binding("f5", "filter('all')", "All"),
-        Binding("t", "next_theme", "Theme"),
-        Binding("g", "toggle_graph", "Graph"),
-        Binding("escape", "close_graph", "Close"),
-        Binding("m", "load_matches", "Matches"),
+        Binding("q", "quit", "Quit", show=True),
+        Binding("r", "refresh_data", "Refresh", show=True),
+        Binding("f1", "filter_category('all')", "All", show=True),
+        Binding("f2", "filter_category('finance')", "Finance", show=True),
+        Binding("f3", "filter_category('politics')", "Politics", show=True),
+        Binding("f4", "filter_category('sports')", "Sports", show=True),
+        Binding("/", "focus_command", "Command", show=True),
+        Binding("escape", "clear_focus", "Clear", show=True),
+        Binding("enter", "show_details", "Details", show=False),
     ]
-
-    current_niche = reactive("all")
-    current_theme_idx = reactive(0)
-    selected_market = reactive(None)
-    show_graph = reactive(False)
-
+    
     def __init__(self):
         super().__init__()
-        self.theme = "nord"
-        self.kalshi = KalshiClient()
-        self.poly = PolymarketClient()
-        self.k_markets = []
-        self.p_markets = []
-        self._market_data_map = {}
-
+        self.current_category = "all"
+        self.all_markets: list[MarketData] = []
+        self.filtered_markets: list[MarketData] = []
+        self._selected_row = 0
+        
     def compose(self) -> ComposeResult:
-        yield Ticker(id="ticker")
+        yield HeaderTicker(id="ticker")
         
-        with Horizontal(id="main"):
-            with ScrollableContainer(id="kalshi-pane", classes="pane"):
-                yield Static("KALSHI", classes="pane-header")
-                yield Vertical(id="kalshi-markets")
-            with ScrollableContainer(id="poly-pane", classes="pane"):
-                yield Static("POLYMARKET", classes="pane-header")
-                yield Vertical(id="poly-markets")
-            with Vertical(id="graph-pane", classes="pane hidden"):
-                yield Static("CHART", classes="pane-header")
-                yield Vertical(id="graph-content")
+        with Container(id="main"):
+            yield MarketDataTable(id="market-table")
+            
+        yield ClawdbotStatus(id="clawdbot-status")
         
+        with Horizontal(id="command-bar"):
+            yield CommandBar(id="command-input")
+            
         yield Footer()
-
-    CSS = """
-    Screen { background: $surface; }
-    
-    #ticker {
-        height: 1;
-        dock: top;
-        background: $primary;
-        color: $text;
-        text-style: bold;
-        padding: 0 1;
-    }
-    
-    #main {
-        height: 1fr;
-    }
-    
-    .pane {
-        width: 1fr;
-        height: 100%;
-        border: solid $border;
-    }
-    
-    .pane.hidden {
-        display: none;
-    }
-    
-    #kalshi-pane { border-left: none; }
-    
-    .pane-header {
-        height: 1;
-        dock: top;
-        content-align: center middle;
-        text-style: bold;
-        background: $panel;
-        color: $accent;
-    }
-    
-    .market-card {
-        height: 1;
-        padding: 0 1;
-        layout: horizontal;
-    }
-    
-    .market-card:hover {
-        background: $panel;
-    }
-    
-    .market-card.selected {
-        background: $primary;
-    }
-    
-    .cat { text-style: bold; }
-    .cat-POL { color: $accent; }
-    .cat-SPO { color: $success; }
-    .cat-FIN { color: $warning; }
-    .cat-ENT { color: $error; }
-    .cat-OTH { color: $text-muted; }
-    
-    .price-high { color: #a6e3a1; }
-    .price-mid { color: #f9e2af; }
-    .price-low { color: #f38ba8; }
-    .price-default { color: $text; }
-    
-    .title { color: $text; }
-    
-    #graph-pane {
-        width: 40%;
-    }
-    
-    .graph-title {
-        color: $text;
-        text-style: bold;
-        padding: 1 2;
-    }
-    
-    .graph-price {
-        color: $accent;
-        text-style: bold;
-        padding: 0 2;
-    }
-    
-    .graph-sparkline {
-        color: $success;
-        padding: 1 2;
-    }
-    
-    Footer { background: $panel; }
-    """
-
-    async def on_mount(self) -> None:
-        await self.kalshi.login()
-        await self.action_refresh()
-
-    async def action_refresh(self) -> None:
-        k_task = asyncio.create_task(self.refresh_kalshi())
-        p_task = asyncio.create_task(self.refresh_poly())
-        await asyncio.gather(k_task, p_task)
-
-    async def refresh_kalshi(self):
-        container = self.query_one("#kalshi-markets", Vertical)
-        container.remove_children()
         
-        markets = await self.kalshi.get_active_markets(limit=100)
+    def on_mount(self) -> None:
+        self.load_sample_data()
+        self.populate_table()
+        self.query_one("#clawdbot-status", ClawdbotStatus).update_status(
+            f"Loaded {len(self.all_markets)} matched markets"
+        )
         
-        for m in markets:
-            title = getattr(m, 'title', m.ticker) or m.ticker
-            cat = MarketClassifier.classify(title) or "other"
-            
-            if self.current_niche != "all" and cat != self.current_niche:
-                continue
-            
-            yes_bid = getattr(m, 'yes_bid', 0) or 0
-            yes_ask = getattr(m, 'yes_ask', 0) or 0
-            price = (yes_bid + yes_ask) / 2 / 100 if (yes_bid or yes_ask) else 0
-            
-            cat_label = MarketClassifier.label(cat)
-            price_color = "price-high" if price >= 0.75 else "price-low" if price <= 0.15 else "price-mid" if 0.40 <= price <= 0.60 else "price-default"
-            title_short = title[:35] + "..." if len(title) > 35 else title
-            
-            market_data = {
-                "title": title,
-                "price": price,
-                "platform": "kalshi",
-                "ticker": getattr(m, 'ticker', ''),
-                "category": cat,
-                "history": [price] * 10,
-            }
-            
-            card = MarketCard(
-                title_short, price, cat, "kalshi", market_data,
-                f"[cat-{cat_label}][{cat_label}][/{cat_label}] [title]{title_short:<38}[/title] [{price_color}]{price:>5.2f}[/{price_color}]",
-                classes="market-card"
-            )
-            container.mount(card)
-
-    async def refresh_poly(self):
-        container = self.query_one("#poly-markets", Vertical)
-        container.remove_children()
-        
-        markets = await self.poly.get_active_markets(limit=100)
-        
-        for m in markets:
-            question = m.get('question', 'Unknown')
-            cat = MarketClassifier.classify(question) or "other"
-            
-            if self.current_niche != "all" and cat != self.current_niche:
-                continue
-            
-            prices = m.get('outcomePrices', [])
-            if isinstance(prices, str):
-                try:
-                    prices = json.loads(prices)
-                except:
-                    prices = []
-            
-            price = float(prices[0]) if (isinstance(prices, list) and len(prices) > 0) else 0
-            
-            cat_label = MarketClassifier.label(cat)
-            price_color = "price-high" if price >= 0.75 else "price-low" if price <= 0.15 else "price-mid" if 0.40 <= price <= 0.60 else "price-default"
-            title_short = question[:35] + "..." if len(question) > 35 else question
-            
-            market_data = {
-                "title": question,
-                "price": price,
-                "platform": "polymarket",
-                "condition_id": m.get('conditionId', ''),
-                "category": cat,
-                "history": [price] * 10,
-            }
-            
-            card = MarketCard(
-                title_short, price, cat, "polymarket", market_data,
-                f"[cat-{cat_label}][{cat_label}][/{cat_label}] [title]{title_short:<38}[/title] [{price_color}]{price:>5.2f}[/{price_color}]",
-                classes="market-card"
-            )
-            container.mount(card)
-
-    async def action_filter(self, niche: str) -> None:
-        self.current_niche = niche
-        await self.action_refresh()
-
-    def action_toggle_graph(self) -> None:
-        self.show_graph = not self.show_graph
-        graph_pane = self.query_one("#graph-pane")
-        if self.show_graph:
-            graph_pane.remove_class("hidden")
-        else:
-            graph_pane.add_class("hidden")
-
-    def action_close_graph(self) -> None:
-        self.show_graph = False
-        self.query_one("#graph-pane").add_class("hidden")
-        self.selected_market = None
-
-    def action_load_matches(self) -> None:
-        matches = self.load_matches()
-        if not matches:
-            self.notify("No matches file found. Run /match in OpenClaw first.")
-            return
-        
-        self.notify(f"Loaded {len(matches)} matched markets")
-        self.show_matches_panel(matches)
-
-    def load_matches(self) -> list:
+    def load_sample_data(self):
         if MATCHES_FILE.exists():
-            with open(MATCHES_FILE) as f:
-                return json.load(f)
-        return []
-
-    def show_matches_panel(self, matches: list) -> None:
-        graph_pane = self.query_one("#graph-pane")
-        graph_pane.remove_class("hidden")
+            try:
+                with open(MATCHES_FILE) as f:
+                    data = json.load(f)
+                    for item in data:
+                        market = MarketData(
+                            event=item.get("event", "Unknown"),
+                            kalshi_prob=item.get("kalshi_prob", 0),
+                            poly_prob=item.get("poly_prob", 0),
+                            volume=item.get("volume", 0),
+                            category=item.get("category", "other")
+                        )
+                        self.all_markets.append(market)
+                    return
+            except Exception:
+                pass
         
-        container = self.query_one("#graph-content", Vertical)
-        container.remove_children()
+        self.all_markets = [
+            MarketData("Harden 3+ 3PTs", 0.75, 0.72, 1200, "sports"),
+            MarketData("Trump deported", 0.03, 0.04, 8500, "politics"),
+            MarketData("GTA VI $100M+", 0.01, 0.02, 450, "entertainment"),
+            MarketData("Fed rate cut Q1", 0.65, 0.68, 5200, "finance"),
+            MarketData("BTC $100K by EOY", 0.42, 0.45, 15000, "finance"),
+            MarketData("Election winner Dem", 0.48, 0.51, 25000, "politics"),
+            MarketData("Super Bowl winner", 0.55, 0.52, 8000, "sports"),
+            MarketData("NVDA $200+", 0.82, 0.78, 3200, "finance"),
+            MarketData("China Taiwan invasion", 0.08, 0.11, 1800, "politics"),
+            MarketData("Oscar Best Picture", 0.35, 0.38, 900, "entertainment"),
+            MarketData("Oil $100/barrel", 0.28, 0.25, 2100, "finance"),
+            MarketData("NBA champion", 0.22, 0.19, 4500, "sports"),
+            MarketData("UK recession 2026", 0.18, 0.21, 650, "finance"),
+            MarketData("Elon Mars 2026", 0.05, 0.07, 3200, "entertainment"),
+            MarketData("Harris VP pick", 0.62, 0.58, 4100, "politics"),
+        ]
         
-        container.mount(Static(f"\n[graph-title]Matched Markets ({len(matches)})[/graph-title]\n", classes="graph-title"))
+    def populate_table(self):
+        table = self.query_one("#market-table", MarketDataTable)
+        table.clear()
         
-        for match in matches[:15]:
-            k_title = match.get('kalshi_title', '')[:25]
-            p_title = match.get('polymarket_title', '')[:25]
-            conf = match.get('confidence', 0)
-            conf_color = "price-high" if conf >= 0.7 else "price-mid" if conf >= 0.5 else "price-low"
+        self.filtered_markets = [
+            m for m in self.all_markets 
+            if self.current_category == "all" or m.category == self.current_category
+        ]
+        
+        for market in self.filtered_markets:
+            kalshi_color = table.get_probability_color(market.kalshi_prob)
+            poly_color = table.get_probability_color(market.poly_prob)
+            delta_color = table.get_delta_color(market.delta_pct)
             
-            container.mount(Static(
-                f"[accent]K:[/accent] {k_title}\n[warning]P:[/warning] {p_title}\n[{conf_color}]Conf: {conf:.2f}[/{conf_color}]\n",
-                classes="graph-title"
-            ))
+            delta_str = f"+{market.delta_pct:.0f}%" if market.delta_pct >= 0 else f"{market.delta_pct:.0f}%"
+            
+            table.add_row(
+                market.event,
+                f"[{kalshi_color}]{market.kalshi_prob:.2f}[/{kalshi_color}]",
+                f"[{poly_color}]{market.poly_prob:.2f}[/{poly_color}]",
+                f"[{delta_color}]{delta_str}[/{delta_color}]",
+                market.format_volume()
+            )
+            
+    def action_filter_category(self, category: str) -> None:
+        self.current_category = category
+        self.populate_table()
+        status = self.query_one("#clawdbot-status", ClawdbotStatus)
+        status.update_status(f"Filtered to {category} ({len(self.filtered_markets)} markets)")
+        
+    def action_refresh_data(self) -> None:
+        self.load_sample_data()
+        self.populate_table()
+        status = self.query_one("#clawdbot-status", ClawdbotStatus)
+        status.update_status(f"Refreshed {len(self.all_markets)} markets")
+        
+    def action_focus_command(self) -> None:
+        self.query_one("#command-input", CommandBar).query_one(Input).focus()
+        
+    def action_clear_focus(self) -> None:
+        self.query_one("#command-input", CommandBar).query_one(Input).blur()
+        
+    def action_show_details(self) -> None:
+        table = self.query_one("#market-table", MarketDataTable)
+        cursor = table.cursor_row
+        if cursor < len(self.filtered_markets):
+            market = self.filtered_markets[cursor]
+            status = self.query_one("#clawdbot-status", ClawdbotStatus)
+            status.update_status(
+                f"Selected: {market.event} | K:{market.kalshi_prob:.0%} P:{market.poly_prob:.0%} Δ:{market.delta_pct:+.0f}%"
+            )
+            
+    def on_market_data_table_row_selected(self, event) -> None:
+        self.action_show_details()
 
-    def show_graph_panel(self, market_data: dict) -> None:
-        if not market_data:
-            return
-        
-        self.show_graph = True
-        graph_pane = self.query_one("#graph-pane")
-        graph_pane.remove_class("hidden")
-        
-        container = self.query_one("#graph-content", Vertical)
-        container.remove_children()
-        
-        title = market_data.get("title", market_data.get("question", "Unknown"))
-        price = market_data.get("price", 0)
-        platform = market_data.get("platform", "unknown")
-        
-        container.mount(Static(f"\n[graph-title]{title}[/graph-title]\n", classes="graph-title"))
-        container.mount(Static(f"[graph-price]Current Price: ${price:.2f}[/graph-price]\n", classes="graph-price"))
-        
-        sparkline_data = market_data.get("history", [price] * 10)
-        sparkline = self._generate_sparkline(sparkline_data)
-        container.mount(Static(f"[graph-sparkline]{sparkline}[/graph-sparkline]", classes="graph-sparkline"))
-        
-        container.mount(Static(f"\nPlatform: {platform.upper()}", classes="graph-title"))
-
-    def _generate_sparkline(self, data: list) -> str:
-        if not data:
-            return "No data"
-        
-        data = data[-20:] if len(data) > 20 else data
-        min_val = min(data)
-        max_val = max(data)
-        range_val = max_val - min_val if max_val > min_val else 1
-        
-        chars = "▁▂▃▄▅▆▇█"
-        result = ""
-        for v in data:
-            normalized = (v - min_val) / range_val
-            idx = int(normalized * (len(chars) - 1))
-            result += chars[idx]
-        
-        return result
-
-    def action_next_theme(self) -> None:
-        self.current_theme_idx = (self.current_theme_idx + 1) % len(THEMES)
-        self.theme = THEMES[self.current_theme_idx]
 
 if __name__ == "__main__":
-    app = PolyTerminal()
+    app = PredictionMarketApp()
     app.run()
