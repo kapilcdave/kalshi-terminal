@@ -24,6 +24,7 @@ build/
 firstliveterminalkey.txt
 kalshi_key.pem
 second key.txt
+polyterminal.txt
 
 # Diff/patch files (can contain leaked code)
 *.patch
