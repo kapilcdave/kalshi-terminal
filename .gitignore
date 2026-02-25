@@ -13,11 +13,22 @@ build/
 
 # Environment & Secrets
 .env
+.env.*
+!.env.example
 *.pem
 *.key
+*.txt.key
+*key*.txt
+*private*
+*secret*
 firstliveterminalkey.txt
 kalshi_key.pem
 second key.txt
+
+# Diff/patch files (can contain leaked code)
+*.patch
+*.rej
+stash_diff.patch
 
 # IDE
 .vscode/
