@@ -34,12 +34,14 @@ class LiveEngine:
         store: UnifiedStore,
         kalshi_env: str = "demo",
         kalshi_api_key: Optional[str] = None,
-        kalshi_private_key: Optional[str] = None
+        kalshi_private_key: Optional[str] = None,
+        kalshi_client: Any = None
     ):
         self.store = store
         self.kalshi_env = kalshi_env
         self.kalshi_api_key = kalshi_api_key
         self.kalshi_private_key = kalshi_private_key
+        self.kalshi_client = kalshi_client
         
         self._running = False
         self._tasks: List[asyncio.Task] = []
@@ -112,24 +114,29 @@ class LiveEngine:
         url = self.KALSHI_WSS_PROD if self.kalshi_env == "prod" else self.KALSHI_WSS_DEMO
         
         headers = {}
-        if self.kalshi_api_key and self.kalshi_private_key:
-            import base64
-            auth_value = base64.b64encode(
-                f"{self.kalshi_api_key}:{self.kalshi_private_key[:20]}".encode()
-            ).decode()
-            headers["Authorization"] = f"Basic {auth_value}"
+        if self.kalshi_client and self.kalshi_client.api_key and self.kalshi_client.private_key_content:
+            try:
+                headers = self.kalshi_client.get_auth_headers("GET", "/trade-api/ws/v2")
+            except Exception:
+                pass
         
+        kwargs = {}
+        if headers:
+            kwargs["extra_headers"] = headers
+            
         while self._running:
             try:
-                async with websockets.connect(url, extra_headers=headers if headers else None) as ws:
+                async with websockets.connect(url, **kwargs) as ws:
                     self.kalshi_status.connected = True
                     self.kalshi_status.last_heartbeat = time.time()
                     await self._notify_status(self.kalshi_status)
                     
                     await ws.send(json.dumps({
-                        "type": "subscribe",
-                        "channel": "markets",
-                        "markets": ["*"]
+                        "id": int(time.time()),
+                        "cmd": "subscribe",
+                        "params": {
+                            "channels": ["ticker", "trade"]
+                        }
                     }))
                     
                     async for message in ws:
@@ -137,13 +144,31 @@ class LiveEngine:
                             break
                             
                         try:
+                            # Handle bytes message
+                            if isinstance(message, bytes):
+                                message = message.decode('utf-8')
+                                
                             data = json.loads(message)
                             self.kalshi_status.messages_received += 1
                             
-                            await self._process_kalshi_message(data)
-                            await self._notify_price("kalshi", data)
+                            msg_type = data.get("type", "")
                             
-                        except json.JSONDecodeError:
+                            # Skip subscription confirmations and heartbeats
+                            if msg_type in ["subscribed", "heartbeat"]:
+                                continue
+                            
+                            # Handle message in msg field for new format
+                            msg_data = data.get("msg", data)
+                            
+                            if isinstance(msg_data, list):
+                                for item in msg_data:
+                                    await self._process_kalshi_message(item)
+                                    await self._notify_price("kalshi", item)
+                            else:
+                                await self._process_kalshi_message(msg_data)
+                                await self._notify_price("kalshi", msg_data)
+                            
+                        except Exception as e:
                             continue
                             
             except asyncio.CancelledError:
@@ -160,24 +185,31 @@ class LiveEngine:
     async def _process_kalshi_message(self, data: Dict):
         msg_type = data.get("type", "")
         
-        if msg_type == "trade" or msg_type == "orderbook":
-            ticker = data.get("ticker") or data.get("market_ticker")
+        if msg_type in ["trade", "ticker"]:
+            ticker = data.get("market_ticker")
             if not ticker:
                 return
                 
             price = 0.0
             volume = 0
             
-            if msg_type == "trade":
-                price = data.get("price", 0) / 100 if isinstance(data.get("price"), (int, float)) else 0
-                volume = data.get("size", 0) or data.get("volume", 0)
-            elif msg_type == "orderbook":
-                orderbook = data.get("orderbook", {})
-                yes_orders = orderbook.get("yes", [])
-                if yes_orders and len(yes_orders) > 0:
-                    price = yes_orders[0][0] / 100 if isinstance(yes_orders[0][0], (int, float)) else 0
+            try:
+                if msg_type == "ticker":
+                    yes_bid = data.get("yes_bid")
+                    yes_ask = data.get("yes_ask")
+                    if yes_bid and yes_ask:
+                        price = (float(yes_bid) + float(yes_ask)) / 2 / 100
+                    elif yes_bid:
+                        price = float(yes_bid) / 100
+                    volume = int(data.get("volume", 0) or 0)
+                elif msg_type == "trade":
+                    price = float(data.get("price", 0)) / 100
+                    volume = int(data.get("size", 0) or data.get("volume", 0))
+            except (ValueError, TypeError):
+                pass
                     
-            await self.store.update_from_kalshi(ticker, price, volume)
+            if ticker and price > 0:
+                await self.store.update_from_kalshi(ticker, price, volume)
             
         elif msg_type == "heartbeat":
             self.kalshi_status.last_heartbeat = time.time()
@@ -269,6 +301,71 @@ class LiveEngine:
     async def fetch_initial_markets(self) -> bool:
         if not self._http_client:
             self._http_client = httpx.AsyncClient(timeout=30.0)
+            
+        logger.info("Fetching initial markets...")
+        
+        # 1. Fetch from Kalshi
+        try:
+            from kalshi_client import KalshiClient
+            kc = KalshiClient()
+            kalshi_markets = await kc.get_active_markets(limit=50)
+            for m in kalshi_markets:
+                price = 0
+                if kc.use_mock:
+                    price = getattr(m, 'last_price', 0)
+                else:
+                    yes_bid = getattr(m, 'yes_bid', 0) or 0
+                    yes_ask = getattr(m, 'yes_ask', 0) or 0
+                    if yes_bid > 0 and yes_ask > 0:
+                        price = (yes_bid + yes_ask) / 2 / 100
+                    elif yes_bid > 0:
+                        price = yes_bid / 100
+                    elif yes_ask > 0:
+                        price = yes_ask / 100
+                
+                if price > 0:
+                    await self.store.update_from_kalshi(m.ticker, price, 0)
+            logger.info(f"Fetched {len(kalshi_markets)} markets from Kalshi.")
+        except Exception as e:
+            logger.error(f"Failed to fetch Kalshi markets: {e}")
+        
+        # 2. Fetch from Polymarket
+        try:
+            response = await self._http_client.get(
+                f"{self.POLY_GAMMA_API}/markets",
+                params={"active": "true", "limit": 50, "closed": "false"}
+            )
+            if response.status_code == 200:
+                poly_markets = response.json()
+                for m in poly_markets:
+                    outcome_prices_raw = m.get('outcomePrices')
+                    price = 0
+                    if outcome_prices_raw:
+                        try:
+                            if isinstance(outcome_prices_raw, str):
+                                outcome_prices = json.loads(outcome_prices_raw)
+                            else:
+                                outcome_prices = outcome_prices_raw
+                            if outcome_prices and len(outcome_prices) > 0:
+                                price = float(outcome_prices[0])
+                        except (ValueError, TypeError, json.JSONDecodeError):
+                            price = 0
+                    
+                    token_id = None
+                    clob_token_ids = m.get('clobTokenIds', [])
+                    if clob_token_ids and len(clob_token_ids) > 0:
+                        token_id = clob_token_ids[0]
+                    
+                    if price > 0 and token_id:
+                        await self.store.update_from_poly(
+                            token_id, 
+                            m.get('question'), 
+                            price, 
+                            0
+                        )
+                logger.info(f"Fetched {len(poly_markets)} markets from Polymarket.")
+        except Exception as e:
+            logger.error(f"Failed to fetch Polymarket markets: {e}")
             
         return True
         

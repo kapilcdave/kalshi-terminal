@@ -1,0 +1,11 @@
+--- kalshi_client.py
++++ kalshi_client.py
+@@ -68,7 +73,7 @@ class KalshiClient:
+ 
+         if not self.use_mock:
+             if self.env == "prod":
+-                self.host = "https://api.kalshi.com/trade-api/v2"
++                self.host = "https://api.elections.kalshi.com/trade-api/v2"
+             else:
+                 self.host = "https://demo-api.kalshi.co/trade-api/v2"
+ 

@@ -11,7 +11,7 @@ import httpx
 
 logger = logging.getLogger("AgentManager")
 
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class AgentState(Enum):
     IDLE = "idle"
@@ -43,11 +43,11 @@ class AgentManager:
         self,
         store,
         api_key: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "stepfun/step-3.5-flash:free",
         max_tokens: int = 1024
     ):
         self.store = store
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.model = model
         self.max_tokens = max_tokens
         
@@ -206,7 +206,7 @@ Returns detailed analysis of the arbitrage potential.""",
         ]
         
         try:
-            response = await self._call_anthropic(messages)
+            response = await self._call_llm(messages)
             
             self.context.state = AgentState.ACTIVE
             self.context.last_analysis = response
@@ -221,7 +221,7 @@ Returns detailed analysis of the arbitrage potential.""",
             await self._notify_output(error_msg, "error")
             return error_msg
             
-    async def _call_anthropic(self, messages: List[Message]) -> str:
+    async def _call_llm(self, messages: List[Message]) -> str:
         system_prompt = """You are Clawdbot, an AI assistant for a prediction market terminal that 
 monitors prices from both Kalshi and Polymarket. You help users analyze market data, 
 spot arbitrage opportunities, and understand price movements.
@@ -232,27 +232,34 @@ use the get_market_data tool to fetch current prices and analyze opportunities.
 Be concise, analytical, and focused on actionable insights."""
         
         headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": "https://github.com/kapilcdave/kalshi",
+            "X-Title": "Kalshi Terminal",
+            "Content-Type": "application/json"
         }
         
+        # OpenRouter uses OpenAI format
+        openai_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            msg = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                msg["tool_calls"] = m.tool_calls
+            if m.tool_call_id:
+                msg["tool_call_id"] = m.tool_call_id
+            openai_messages.append(msg)
+
         payload = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": system_prompt,
-            "messages": [
-                {
-                    "role": m.role,
-                    "content": m.content
-                }
-                for m in messages
-            ],
+            "messages": openai_messages,
             "tools": [
                 {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.input_schema
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema
+                    }
                 }
                 for t in self._tools
             ]
@@ -260,7 +267,7 @@ Be concise, analytical, and focused on actionable insights."""
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                ANTHROPIC_API_URL,
+                OPENROUTER_API_URL,
                 headers=headers,
                 json=payload
             )
@@ -269,22 +276,30 @@ Be concise, analytical, and focused on actionable insights."""
                 raise Exception(f"API error: {response.status_code} - {response.text}")
                 
             data = response.json()
+            choices = data.get("choices", [])
+            if not choices:
+                return "No response from LLM"
+                
+            choice = choices[0]
+            message = choice.get("message", {})
             
-            if "content" in data:
-                for block in data["content"]:
-                    if block.get("type") == "text":
-                        return block["text"]
-                    elif block.get("type") == "tool_use":
-                        tool_result = await self._handle_tool_call(block)
-                        messages.append(Message(
-                            role="user",
-                            content=tool_result,
-                            tool_call_id=block.get("id")
-                        ))
-                        
-                        return await self._call_anthropic(messages)
-                        
-            return data.get("text", "No response")
+            if "tool_calls" in message:
+                for tool_call in message["tool_calls"]:
+                    tool_result = await self._handle_tool_call(tool_call.get("function", {}))
+                    messages.append(Message(
+                        role="assistant",
+                        content="", # OpenAI expects tool calls in assistant message
+                        tool_calls=[tool_call]
+                    ))
+                    messages.append(Message(
+                        role="tool",
+                        content=tool_result,
+                        tool_call_id=tool_call.get("id")
+                    ))
+                
+                return await self._call_llm(messages)
+                
+            return message.get("content", "No content")
             
     async def _handle_tool_call(self, tool_block: Dict) -> str:
         tool_name = tool_block.get("name", "")

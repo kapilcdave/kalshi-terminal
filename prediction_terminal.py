@@ -24,32 +24,28 @@ from live_engine import LiveEngine
 from agent_manager import AgentManager
 
 
-CSS_PATH = "prediction_terminal.tcss"
 
 
-class TerminalHeader(Static):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._update_task = None
-        
+
+class TerminalHeader(Horizontal):
     def compose(self) -> ComposeResult:
-        with Horizontal(id="header-container"):
-            yield Label("[P] PredictionTerminal", id="app-title")
-            yield Label("|", classes="separator")
-            yield Label("● LIVE", id="connection-status", classes="status-connected")
-            yield Label("", id="latency")
-            yield Label("", id="balance")
-            yield Label("", id="clock", classes="clock")
+        yield Label("[P] PredictionTerminal", id="app-title")
+        yield Label("|", classes="separator")
+        yield Label("● LIVE", id="connection-status", classes="status-connected")
+        yield Label("", id="latency")
+        yield Label("", id="balance")
+        yield Label("", id="clock", classes="clock")
 
 
-class MarketTablePane(Vertical):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.selected_market_id: Optional[str] = None
-        
+class KalshiTablePane(Vertical):
     def compose(self) -> ComposeResult:
-        yield Label("[ Unified Markets ]", classes="pane-title")
-        yield DataTable(id="market-table")
+        yield Label("[ KALSHI (USD) ]", classes="pane-title")
+        yield DataTable(id="kalshi-table")
+
+class PolyTablePane(Vertical):
+    def compose(self) -> ComposeResult:
+        yield Label("[ POLYMARKET (USDC) ]", classes="pane-title")
+        yield DataTable(id="poly-table")
         
 
 class GraphPane(Vertical):
@@ -61,10 +57,7 @@ class GraphPane(Vertical):
         yield Label("[ Price History ]", classes="pane-title")
         yield Sparkline(
             id="price-sparkline",
-            data=[],
-            summary=0,
-            min=0,
-            max=100
+            data=[]
         )
         yield Label("", id="graph-details", classes="graph-details")
 
@@ -92,19 +85,27 @@ class CommandInput(Input):
 class PredictionTerminal(App):
     CSS = """
     Screen {
-        background: $surface;
+        background: #0a0a0a;
+        color: #e0e0e0;
     }
     
     #header-container {
         height: 1;
-        background: $primary;
+        background: #161b22;
         dock: top;
         padding: 0 1;
+        border-bottom: solid #00ffff;
     }
     
     #app-title {
         text-style: bold;
-        color: $text;
+        color: #00ffff;
+    }
+    
+    .clock {
+        width: 1fr;
+        text-align: right;
+        color: #00ff00;
     }
     
     .separator {
@@ -113,91 +114,82 @@ class PredictionTerminal(App):
     }
     
     #connection-status {
-        color: $success;
+        color: #00ff00;
+        text-style: bold;
     }
     
     #connection-status.disconnected {
-        color: $error;
+        color: #ff3333;
     }
     
     .clock {
         width: 1fr;
         text-align: right;
-        color: $text-muted;
-    }
-    
-    #latency, #balance {
-        color: $text-muted;
-        margin-left: 2;
+        color: #00ff00;
     }
     
     #main-layout {
-        layout: grid;
-        grid-size: 3 2;
-        grid-columns: 2fr 1fr 1fr;
-        grid-rows: 1fr 80;
+        height: 1fr;
     }
     
     .pane {
-        border: solid $border;
-        padding: 0;
-    }
-    
-    .pane-title {
-        background: $panel;
-        color: $text;
-        text-style: bold;
-        padding: 0 1;
-        height: 1;
-    }
-    
-    #market-table {
+        width: 1fr;
         height: 100%;
-        background: $surface;
+        border: solid #333333;
+        background: #0a0a0a;
     }
     
-    #market-table > .datatable--cursor {
-        background: $primary-darken-1;
+    #side-column {
+        width: 1fr;
+        height: 100%;
     }
     
-    #market-table .datatable--header {
-        background: $panel;
-        color: $text;
+    #side-column .pane {
+        width: 100%;
+        height: 1fr;
     }
     
     #price-sparkline {
-        height: 100%;
-        background: $surface;
-    }
-    
-    .graph-details {
-        height: 1;
-        padding: 0 1;
-        color: $text-muted;
+        height: 1fr;
+        color: #00ff00;
+        background: #0a0a0a;
     }
     
     #console-log {
-        height: 100%;
-        background: $surface;
-        color: $text;
+        height: 1fr;
+        background: #0a0a0a;
+        color: #e0e0e0;
     }
     
     #command-bar {
         height: 1;
         dock: bottom;
-        background: $panel;
+        background: #161b22;
         padding: 0 1;
+        border-top: solid #333333;
+    }
+    
+    #command-logo {
+        color: #00ffff;
+        text-style: bold;
+        margin-right: 1;
     }
     
     #command-input {
-        width: 100%;
-        background: $surface;
-        color: $text;
+        width: 1fr;
+        background: transparent;
+        color: #e0e0e0;
+        border: none;
     }
     
-    #console-split {
-        layout: grid;
-        grid-size: 1 2;
+    .separator {
+        color: #666666;
+        margin: 0 1;
+    }
+    
+    #latency, #balance {
+        color: #888888;
+        margin-left: 2;
     }
     """
     
@@ -225,30 +217,35 @@ class PredictionTerminal(App):
             store=self.store,
             kalshi_env=os.getenv("KALSHI_ENV", "demo"),
             kalshi_api_key=os.getenv("KALSHI_API_KEY"),
-            kalshi_private_key=os.getenv("KALSHI_PRIVATE_KEY")
+            kalshi_private_key=self.kalshi.private_key_content if not self.kalshi.use_mock else None,
+            kalshi_client=self.kalshi
         )
         
         self.agent = AgentManager(
             store=self.store,
-            api_key=os.getenv("ANTHROPIC_API_KEY")
+            api_key=os.getenv("OPENROUTER_API_KEY")
         )
         
         self.current_filter = "all"
         
     def compose(self) -> ComposeResult:
-        yield TerminalHeader()
+        yield TerminalHeader(id="header-container")
         
-        with Container(id="main-layout"):
+        with Horizontal(id="main-layout"):
             with Vertical(classes="pane"):
-                yield MarketTablePane()
-                
-            with Vertical(id="console-split", classes="pane"):
-                yield ConsolePane()
+                yield KalshiTablePane()
                 
             with Vertical(classes="pane"):
-                yield GraphPane()
+                yield PolyTablePane()
+                
+            with Vertical(id="side-column"):
+                with Vertical(classes="pane"):
+                    yield GraphPane()
+                with Vertical(classes="pane"):
+                    yield ConsolePane()
                 
         with Horizontal(id="command-bar"):
+            yield Label("🦀 Clawdbot:", id="command-logo")
             yield CommandInput(id="command-input")
             
         yield Footer()
@@ -260,19 +257,26 @@ class PredictionTerminal(App):
         
         self.set_interval(1, self._update_clock)
         
+        # Start engine and agent in background to avoid blocking initial render
+        self._start_services()
+        
+    @work
+    async def _start_services(self):
+        await self.engine.fetch_initial_markets()
         await self.engine.start()
         await self.agent.start()
-        
         await self.action_refresh()
         
     async def _setup_tables(self):
-        table = self.query_one("#market-table", DataTable)
-        table.add_columns(
-            "Event", "Kalshi", "Poly", "Δ%", "Volume"
-        )
-        table.cursor_type = "row"
+        k_table = self.query_one("#kalshi-table", DataTable)
+        k_table.add_columns("Ticker", "Price", "Vol")
+        k_table.cursor_type = "row"
+        k_table.on_row_selected = self._on_row_selected
         
-        table.on_row_selected = self._on_row_selected
+        p_table = self.query_one("#poly-table", DataTable)
+        p_table.add_columns("Question", "Price", "Vol")
+        p_table.cursor_type = "row"
+        p_table.on_row_selected = self._on_row_selected
         
     async def _setup_subscriptions(self):
         self.store.subscribe(self._on_market_update)
@@ -285,9 +289,9 @@ class PredictionTerminal(App):
         
         console = self.query_one("#console-log", RichLog)
         console.write(
-            "[#00ff00 bold]Clawdbot v1.0[#00ff00] - Prediction Market Terminal",
+            "🦀 [#00ff00 bold]Clawdbot v2.0[#00ff00] - OpenRouter Powered",
             )
-        console.write("[#666666]Initializing connections...[/]")
+        console.write("[#666666]Ready for analysis. Press / to command.[/]")
         
     def _console_output(self, text: str, style: str = "default"):
         console = self.query_one("#console-log", RichLog)
@@ -305,7 +309,29 @@ class PredictionTerminal(App):
         else:
             console.write(text)
             
+    async def _refresh_table(self):
+        # Refresh Kalshi Table
+        k_table = self.query_one("#kalshi-table", DataTable)
+        k_table.clear()
+        k_markets = await self.kalshi.get_active_markets(limit=30)
+        for m in k_markets:
+            price = 0
+            yes_bid = getattr(m, 'yes_bid', 0) or 0
+            yes_ask = getattr(m, 'yes_ask', 0) or 0
+            if yes_bid > 0 and yes_ask > 0: price = (yes_bid + yes_ask) / 2 / 100
+            k_table.add_row(m.ticker[:20], f"{price:.2f}", f"{getattr(m, 'volume', 0):,}", key=m.ticker)
+
+        # Refresh Poly Table
+        p_table = self.query_one("#poly-table", DataTable)
+        p_table.clear()
+        p_markets = await self.poly.get_active_markets(limit=30)
+        for m in p_markets:
+            prices = m.get('outcomePrices', [])
+            price = float(prices[0]) if (isinstance(prices, list) and len(prices) > 0) else 0
+            p_table.add_row(m.get('question', '')[:30], f"{price:.2f}", f"{int(float(m.get('volume', 0) or 0)):,}", key=str(m.get('id')))
+            
     async def _on_market_update(self, market: Optional[UnifiedMarket], change_type: str):
+        # We'll refresh both for now on major changes
         if change_type == "rebuild_complete":
             await self._refresh_table()
             
@@ -315,68 +341,57 @@ class PredictionTerminal(App):
         if status.platform == "kalshi":
             if status.connected:
                 status_label.update("● LIVE")
-                status_label.classes = "status-connected"
             else:
                 status_label.update("○ OFFLINE")
-                status_label.classes = "disconnected"
                 
         elif status.platform == "polymarket":
             latency_label = self.query_one("#latency", Label)
-            latency_label.update(f"Latency: {status.latency_ms:.0f}ms")
+            latency_label.update(f"Lat: {status.latency_ms:.0f}ms")
             
     async def _on_price_update(self, platform: str, data: Dict):
         await self._refresh_table()
         
     async def _refresh_table(self):
-        table = self.query_one("#market-table", DataTable)
-        
-        markets = self.store.get_all_markets()
-        
-        if self.current_filter != "all":
-            markets = [m for m in markets 
-                      if self.current_filter.lower() in m.normalized_name.lower()]
-        
-        markets.sort(key=lambda m: m.total_volume, reverse=True)
-        
-        existing_rows = set(table.rows.keys())
-        current_rows = set()
-        
-        for market in markets[:50]:
-            key = market.id
-            current_rows.add(key)
+        try:
+            markets = self.store.get_all_markets()
             
-            delta_str = f"{market.delta_percent:+.1f}%" if market.has_both_prices else "—"
-            kalshi_str = f"{market.kalshi_price:.2f}" if market.kalshi_price > 0 else "—"
-            poly_str = f"{market.poly_price:.2f}" if market.poly_price > 0 else "—"
-            volume_str = f"{market.total_volume:,}"
-            
-            if key in existing_rows:
-                table.update_row(
-                    key,
-                    (market.event_name[:35], kalshi_str, poly_str, delta_str, volume_str)
+            # Refresh Kalshi Table
+            k_table = self.query_one("#kalshi-table", DataTable)
+            k_table.clear()
+            k_list = [m for m in markets if m.kalshi_ticker]
+            k_list.sort(key=lambda m: m.kalshi_volume, reverse=True)
+            for m in k_list[:30]:
+                k_table.add_row(
+                    m.kalshi_ticker, 
+                    f"{m.kalshi_price:.2f}" if m.kalshi_price else "—", 
+                    f"{m.kalshi_volume:,}", 
+                    key=m.id
                 )
-            else:
-                table.add_row(
-                    market.event_name[:35],
-                    kalshi_str,
-                    poly_str,
-                    delta_str,
-                    volume_str,
-                    key=key
+
+            # Refresh Poly Table
+            p_table = self.query_one("#poly-table", DataTable)
+            p_table.clear()
+            p_list = [m for m in markets if m.poly_token_id]
+            p_list.sort(key=lambda m: m.poly_volume, reverse=True)
+            for m in p_list[:30]:
+                p_table.add_row(
+                    m.event_name[:25], 
+                    f"{m.poly_price:.2f}" if m.poly_price else "—", 
+                    f"{int(m.poly_volume):,}", 
+                    key=m.id
                 )
-                
-        for key in existing_rows - current_rows:
-            table.remove_row(key)
+        except Exception:
+            pass
             
     def _on_row_selected(self, event):
-        table = self.query_one("#market-table", DataTable)
-        row_key = table.cursor_row
+        table = event.data_table
+        row_key = event.row_key.value
         
-        if row_key is not None:
-            market = self.store.get_market(str(row_key))
-            if market:
-                self._update_graph(market)
-                
+        market = self.store.get_market(str(row_key))
+        if market:
+            self._update_graph(market)
+            self._console_output(f"Selected: {market.event_name}", "user")
+            
     def _update_graph(self, market: UnifiedMarket):
         history = self.store.get_price_history(market.id)
         

@@ -63,7 +63,7 @@ class KalshiClient:
 
         if not self.use_mock:
             if self.env == "prod":
-                self.host = "https://api.kalshi.com/trade-api/v2"
+                self.host = "https://api.elections.kalshi.com/trade-api/v2"
             else:
                 self.host = "https://demo-api.kalshi.co/trade-api/v2"
 
@@ -100,6 +100,41 @@ class KalshiClient:
                 self.search_api = SearchApi(self.api_client)
             except ImportError:
                 self.search_api = None
+
+    def get_auth_headers(self, method: str, path: str):
+        if self.use_mock or not self.api_key or not self.private_key_content:
+            return {}
+        
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives import serialization
+        import base64
+        import time
+
+        timestamp = str(int(time.time() * 1000))
+        msg = timestamp + method + path
+        
+        try:
+            private_key = serialization.load_pem_private_key(
+                self.private_key_content.encode(),
+                password=None
+            )
+            signature = private_key.sign(
+                msg.encode(),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.DIGEST_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            return {
+                "KALSHI-ACCESS-KEY": self.api_key,
+                "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode(),
+                "KALSHI-ACCESS-TIMESTAMP": timestamp
+            }
+        except Exception as e:
+            logger.error(f"Error signing headers: {e}")
+            return {}
 
     async def login(self):
         if self.use_mock:
