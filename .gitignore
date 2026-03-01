@@ -2,6 +2,10 @@
 venv/
 .venv/
 
+# Textual debug log (auto-generated, can be huge)
+textual.log
+
+
 # Python
 __pycache__/
 *.py[cod]
