@@ -3,6 +3,7 @@ import unittest
 from market_matching import (
     build_kalshi_signature,
     build_poly_signature,
+    find_candidate_matches,
     find_cross_platform_matches,
     score_match,
 )
@@ -61,6 +62,30 @@ class MarketMatchingTests(unittest.TestCase):
 
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].poly_id, "poly-good")
+
+    def test_candidate_matches_returns_multiple_scored_pairs(self) -> None:
+        candidates = find_candidate_matches(
+            {
+                "INXD-23DEC31-B4900": {
+                    "title": "Will the S&P 500 close above 4900 on Dec 31?",
+                    "price": 0.42,
+                }
+            },
+            {
+                "poly-a": {
+                    "question": "S&P 500 above 4900 end of year?",
+                    "price": 0.55,
+                },
+                "poly-b": {
+                    "question": "Will the S&P 500 finish over 4900 by year end?",
+                    "price": 0.57,
+                },
+            },
+            min_score=0.45,
+        )
+
+        self.assertEqual(len(candidates), 2)
+        self.assertGreaterEqual(candidates[0].score, candidates[1].score)
 
 
 if __name__ == "__main__":

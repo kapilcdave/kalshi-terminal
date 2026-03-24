@@ -20,7 +20,7 @@ from textual.widgets import DataTable, Footer, Input, Label, RichLog
 
 from clients import KalshiClient, PolyClient, get_public_kalshi_markets
 from market_grouping import build_grouped_markets, summarize_groups
-from market_matching import find_cross_platform_matches
+from market_matching import find_candidate_matches
 
 load_dotenv()
 logging.basicConfig(level=logging.WARNING)
@@ -527,29 +527,85 @@ class PolyTerminal(App):
         elif cmd == "/refresh":
             await self.action_refresh()
         elif cmd == "/spreads":
-            matches = find_cross_platform_matches(self._k_data, self._p_data)
             k_groups = summarize_groups(list(self._k_data.items()), "title")
             p_groups = summarize_groups(list(self._p_data.items()), "question")
             shared_groups = sorted(set(k_groups) & set(p_groups))
-            if shared_groups:
-                self._log(f"[green]{len(shared_groups)}[/] cross-platform event groups:")
-                for group_key in shared_groups[:10]:
-                    self._log(
-                        f"  {k_groups[group_key]['label']} | "
-                        f"K {k_groups[group_key]['count']} markets / "
-                        f"P {p_groups[group_key]['count']} markets"
-                    )
-            if not matches:
-                self._log("[yellow]0[/] high-confidence cross-platform matches.")
+
+            if not shared_groups:
+                self._log("[yellow]0[/] shared cross-platform event groups.")
                 return
 
-            self._log(f"[yellow]{len(matches)}[/] high-confidence cross-platform matches:")
-            for match in matches[:10]:
+            self._log(f"[green]{len(shared_groups)}[/] shared cross-platform event groups:")
+            shown_groups = 0
+            total_candidate_matches = 0
+            for group_key in shared_groups:
+                k_bucket = k_groups[group_key]
+                p_bucket = p_groups[group_key]
+                k_markets = {
+                    market.market_id: {
+                        "title": market.title,
+                        "price": market.price,
+                        "volume": market.volume,
+                    }
+                    for market in k_bucket["markets"]
+                }
+                p_markets = {
+                    market.market_id: {
+                        "question": market.title,
+                        "price": market.price,
+                        "volume": market.volume,
+                    }
+                    for market in p_bucket["markets"]
+                }
+                candidates = find_candidate_matches(k_markets, p_markets, min_score=0.45)
+                total_candidate_matches += len(candidates)
+
                 self._log(
-                    f"  {match.kalshi_ticker} <-> {match.poly_question[:44]} | "
-                    f"spread [green]{match.spread:.3f}[/] | "
-                    f"score [cyan]{match.score:.2f}[/]"
+                    f"[bold]{k_bucket['label']}[/] | "
+                    f"K {k_bucket['count']} / P {p_bucket['count']} | "
+                    f"candidates [cyan]{len(candidates)}[/]"
                 )
+                self._log("  Kalshi")
+                for market in k_bucket["markets"][:4]:
+                    self._log(
+                        f"    |- {market.market_id[:24]} | {market.title[:52]} | "
+                        f"{market.price:.2f} | vol {int(market.volume):,}"
+                    )
+                if k_bucket["count"] > 4:
+                    self._log(f"    `- … {k_bucket['count'] - 4} more")
+
+                self._log("  Polymarket")
+                for market in p_bucket["markets"][:4]:
+                    self._log(
+                        f"    |- {market.title[:60]} | {market.price:.2f} | vol {int(market.volume):,}"
+                    )
+                if p_bucket["count"] > 4:
+                    self._log(f"    `- … {p_bucket['count'] - 4} more")
+
+                if candidates:
+                    self._log("  Candidate Matches")
+                    for candidate in candidates[:3]:
+                        reasons = ", ".join(candidate.reasons[:3])
+                        self._log(
+                            f"    |- {candidate.kalshi_ticker[:22]} <-> "
+                            f"{candidate.poly_question[:38]} | "
+                            f"score {candidate.score:.2f} | "
+                            f"spread {candidate.spread:.3f} | {reasons}"
+                        )
+                    if len(candidates) > 3:
+                        self._log(f"    `- … {len(candidates) - 3} more")
+                else:
+                    self._log("  Candidate Matches")
+                    self._log("    `- none above score threshold")
+
+                shown_groups += 1
+                if shown_groups >= 8:
+                    remaining = len(shared_groups) - shown_groups
+                    if remaining > 0:
+                        self._log(f"[dim]… {remaining} more shared groups not shown.[/]")
+                    break
+
+            self._log(f"[yellow]{total_candidate_matches}[/] candidate submarket matches in shown groups.")
         elif cmd == "/balance":
             if self.kalshi:
                 try:

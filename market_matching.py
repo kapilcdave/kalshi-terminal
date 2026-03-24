@@ -297,6 +297,23 @@ def find_cross_platform_matches(
     poly_data: dict[str, dict],
     min_score: float = 0.65,
 ) -> list[MatchResult]:
+    candidates = find_candidate_matches(kalshi_data, poly_data, min_score=min_score)
+    best_by_kalshi: dict[str, MatchResult] = {}
+    for candidate in candidates:
+        existing = best_by_kalshi.get(candidate.kalshi_ticker)
+        if existing is None or candidate.score > existing.score:
+            best_by_kalshi[candidate.kalshi_ticker] = candidate
+
+    matches = list(best_by_kalshi.values())
+    matches.sort(key=lambda item: (-item.score, -item.spread, item.kalshi_ticker))
+    return matches
+
+
+def find_candidate_matches(
+    kalshi_data: dict[str, dict],
+    poly_data: dict[str, dict],
+    min_score: float = 0.45,
+) -> list[MatchResult]:
     poly_signatures = {
         mid: build_poly_signature(mid, data)
         for mid, data in poly_data.items()
@@ -305,26 +322,25 @@ def find_cross_platform_matches(
     candidates: list[MatchResult] = []
     for ticker, k_data in kalshi_data.items():
         k_sig = build_kalshi_signature(ticker, k_data)
-        best_match: Optional[MatchResult] = None
         for mid, p_data in poly_data.items():
             p_sig = poly_signatures[mid]
             score, reasons = score_match(k_sig, p_sig)
             if score < min_score:
                 continue
-            candidate = MatchResult(
-                kalshi_ticker=ticker,
-                kalshi_title=k_data.get("title") or ticker,
-                kalshi_price=float(k_data.get("price") or 0.0),
-                poly_id=mid,
-                poly_question=p_data.get("question") or mid,
-                poly_price=float(p_data.get("price") or 0.0),
-                score=score,
-                reasons=reasons,
+            candidates.append(
+                MatchResult(
+                    kalshi_ticker=ticker,
+                    kalshi_title=k_data.get("title") or ticker,
+                    kalshi_price=float(k_data.get("price") or 0.0),
+                    poly_id=mid,
+                    poly_question=p_data.get("question") or mid,
+                    poly_price=float(p_data.get("price") or 0.0),
+                    score=score,
+                    reasons=reasons,
+                )
             )
-            if best_match is None or candidate.score > best_match.score:
-                best_match = candidate
-        if best_match is not None:
-            candidates.append(best_match)
 
-    candidates.sort(key=lambda item: (-item.score, -item.spread, item.kalshi_ticker))
+    candidates.sort(
+        key=lambda item: (-item.score, -item.spread, item.kalshi_ticker, item.poly_id)
+    )
     return candidates
