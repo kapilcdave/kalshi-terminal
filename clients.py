@@ -22,6 +22,15 @@ POLY_API    = "https://gamma-api.polymarket.com"
 POLY_WS     = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 
+async def get_public_kalshi_markets(limit: int = 100) -> list[dict]:
+    """Fetch public Kalshi markets without authentication."""
+    params = {"status": "open", "limit": limit}
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(f"{KALSHI_API}/trade-api/v2/markets", params=params)
+        r.raise_for_status()
+        return r.json().get("markets", [])
+
+
 # ─── Kalshi ───────────────────────────────────────────────────────────────────
 
 class KalshiClient:
@@ -69,11 +78,15 @@ class KalshiClient:
             r.raise_for_status()
             return r.json().get("balance", 0) / 100
 
-    async def stream(self, on_msg: Callable, on_status: Callable):
+    async def stream(self, on_msg: Callable, on_status: Callable, log_cb: Optional[Callable] = None):
         """
         Open Kalshi WebSocket and call on_msg(ticker, yes_price) on each update.
         Reconnects automatically on disconnect. Calls on_status("connected"/"disconnected").
         """
+        def _log(msg: str):
+            if log_cb: log_cb(msg)
+            else: log.info(msg)
+
         path = "/trade-api/ws/v2"
         while True:
             try:
@@ -82,6 +95,7 @@ class KalshiClient:
                     KALSHI_WS, additional_headers=headers, ping_interval=20
                 ) as ws:
                     await on_status("connected")
+                    _log("Kalshi WS connected. Subscribing to 'ticker' channel...")
                     # Subscribe to ticker channel
                     await ws.send(json.dumps({
                         "id": int(time.time()),
@@ -91,6 +105,10 @@ class KalshiClient:
                     async for raw in ws:
                         try:
                             data = json.loads(raw if isinstance(raw, str) else raw.decode())
+                            if data.get("type") == "subscribed":
+                                _log("Kalshi subscribed to 'ticker' channel.")
+                                continue
+                            
                             msg  = data.get("msg", {})
                             msgs = msg if isinstance(msg, list) else [msg]
                             for m in msgs:
@@ -101,12 +119,12 @@ class KalshiClient:
                                     bids = [v for v in [yes_bid, yes_ask] if v is not None]
                                     price = sum(bids) / len(bids) / 100
                                     await on_msg(ticker, price)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _log(f"Kalshi WS parse error: {e}")
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                log.warning(f"Kalshi WS error: {e}")
+                _log(f"Kalshi WS error: {e}")
                 await on_status("disconnected")
                 await asyncio.sleep(5)
 
@@ -123,17 +141,22 @@ class PolyClient:
             data = r.json()
             return data if isinstance(data, list) else data.get("markets", [])
 
-    async def stream(self, token_ids: list[str], on_msg: Callable, on_status: Callable):
+    async def stream(self, token_ids: list[str], on_msg: Callable, on_status: Callable, log_cb: Optional[Callable] = None):
         """
         Open Polymarket WebSocket for the given token IDs.
         Calls on_msg(token_id, price) on each price change.
         Reconnects automatically.
         """
+        def _log(msg: str):
+            if log_cb: log_cb(msg)
+            else: log.info(msg)
+
         while True:
             try:
                 async with websockets.connect(POLY_WS, ping_interval=20) as ws:
                     await on_status("connected")
                     if token_ids:
+                        _log(f"Polymarket WS connected. Subscribing to {len(token_ids)} tokens...")
                         await ws.send(json.dumps({
                             "type":      "market",
                             "operation": "subscribe",
@@ -147,14 +170,30 @@ class PolyClient:
                                 mtype = m.get("event_type") or m.get("type", "")
                                 if mtype in ("price_change", "book"):
                                     asset_id = m.get("asset_id") or m.get("market")
-                                    price    = float(m.get("price", 0) or 0)
+                                    # Polymarket 'price' field can be in 'price' or top of book
+                                    price_raw = m.get("price")
+                                    if price_raw is None and mtype == "book":
+                                        # For 'book' events, we might need bids/asks
+                                        bids = m.get("bids", [])
+                                        asks = m.get("asks", [])
+                                        if bids and asks:
+                                            price = (float(bids[0][0]) + float(asks[0][0])) / 2
+                                        elif bids:
+                                            price = float(bids[0][0])
+                                        elif asks:
+                                            price = float(asks[0][0])
+                                        else:
+                                            continue
+                                    else:
+                                        price = float(price_raw or 0)
+
                                     if asset_id and price > 0:
                                         await on_msg(asset_id, price)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _log(f"Polymarket WS parse error: {e}")
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                log.warning(f"Poly WS error: {e}")
+                _log(f"Poly WS error: {e}")
                 await on_status("disconnected")
                 await asyncio.sleep(5)

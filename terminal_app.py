@@ -18,13 +18,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Input, Label, RichLog
 
-from clients import KalshiClient, PolyClient
+from clients import KalshiClient, PolyClient, get_public_kalshi_markets
+from market_grouping import build_grouped_markets, summarize_groups
+from market_matching import find_cross_platform_matches
 
 load_dotenv()
 logging.basicConfig(level=logging.WARNING)
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_KEY   = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = "stepfun/step-3.5-flash:free"
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -129,42 +131,60 @@ DataTable > .datatable--odd-row {
 }
 """
 
+# ─── Keyword filter map ────────────────────────────────────────────────────────
+
+FILTER_KEYWORDS: dict[str, list[str]] = {
+    "all":      [],
+    "finance":  ["stock", "market", "fed", "rate", "inflation", "gdp", "crypto", "bitcoin", "eth", "recession", "economy"],
+    "politics": ["election", "president", "congress", "senate", "vote", "trump", "biden", "democrat", "republican", "governor", "party"],
+    "sports":   ["nba", "nfl", "mlb", "nhl", "soccer", "football", "basketball", "baseball", "hockey", "tennis", "golf", "ufc", "mma", "champion"],
+}
+
 # ─── App ──────────────────────────────────────────────────────────────────────
 
 class PolyTerminal(App):
     CSS = CSS
     BINDINGS = [
-        Binding("q",      "quit",            "Quit"),
-        Binding("r",      "refresh",         "Refresh"),
-        Binding("f1",     "filter('all')",   "All"),
-        Binding("f2",     "filter('finance')","Finance"),
-        Binding("f3",     "filter('politics')","Politics"),
-        Binding("f4",     "filter('sports')", "Sports"),
-        Binding("/",      "focus_cmd",       "Command"),
-        Binding("escape", "blur_cmd",        "Dismiss"),
+        Binding("q",      "quit",             "Quit"),
+        Binding("r",      "refresh",          "Refresh"),
+        Binding("f1",     "filter('all')",    "All"),
+        Binding("f2",     "filter('finance')", "Finance"),
+        Binding("f3",     "filter('politics')", "Politics"),
+        Binding("f4",     "filter('sports')",  "Sports"),
+        Binding("/",      "focus_cmd",        "Command"),
+        Binding("escape", "blur_cmd",         "Dismiss"),
     ]
 
     def __init__(self):
         super().__init__()
 
-        api_key = os.getenv("KALSHI_API_KEY", "")
-        key_file = os.getenv("KALSHI_PRIVATE_KEY_FILE", "").strip('"').strip("'")
-        pem = open(key_file).read() if key_file and os.path.exists(key_file) else ""
+        api_key  = os.getenv("KALSHI_API_KEY", "")
+        raw_key_file = os.getenv("KALSHI_PRIVATE_KEY_FILE", "").strip('"').strip("'")
+        key_file = os.path.abspath(raw_key_file) if raw_key_file else ""
+        pem      = open(key_file).read() if key_file and os.path.exists(key_file) else ""
 
         self.kalshi: Optional[KalshiClient] = KalshiClient(api_key, pem) if api_key and pem else None
         self.poly = PolyClient()
+        self._kalshi_key_path = key_file
+        self._kalshi_auth_available = bool(api_key and pem)
 
         # {ticker: {title, price, volume}}
         self._k_data: dict = {}
         # {market_id: {question, price, volume}}
         self._p_data: dict = {}
+        # {token_id: market_id}
+        self._p_token_to_mid: dict = {}
         # token_ids subscribed to poly WS
         self._p_tokens: list[str] = []
 
-        self._filter = "all"
+        self._filter  = "all"
         self._balance = ""
 
-        # background tasks
+        # dirty flags — set on WS tick, cleared after periodic render
+        self._k_dirty = False
+        self._p_dirty = False
+
+        # background tasks (WS streams)
         self._tasks: list[asyncio.Task] = []
 
     # ── Compose ───────────────────────────────────────────────────────────────
@@ -198,21 +218,33 @@ class PolyTerminal(App):
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def on_mount(self) -> None:
-        # Set up table columns
+        # Set up Kalshi table columns with fixed widths
         kt = self.query_one("#k-table", DataTable)
-        kt.add_columns("Ticker", "Title", "Yes", "Vol")
+        kt.add_column("Ticker", width=14)
+        kt.add_column("Title",  width=None)   # auto-fill remaining space
+        kt.add_column("Yes",    width=8)
+        kt.add_column("Vol",    width=10)
+
+        # Set up Polymarket table columns with fixed widths
         pt = self.query_one("#p-table", DataTable)
-        pt.add_columns("Question", "Yes", "Vol")
+        pt.add_column("Question", width=None)  # auto-fill remaining space
+        pt.add_column("Yes",      width=8)
+        pt.add_column("Vol",      width=10)
 
         # Console greeting
         c = self.query_one("#console-log", RichLog)
         c.write("[bold #58a6ff]Clawdbot[/] ready. Type /help for commands.")
+        if not self._kalshi_auth_available:
+            if self._kalshi_key_path:
+                self._log(f"[yellow]Kalshi WS disabled:[/] missing private key file at {self._kalshi_key_path}")
+            else:
+                self._log("[yellow]Kalshi WS disabled:[/] KALSHI_PRIVATE_KEY_FILE is not configured")
 
+        # Clock: every second
         self.set_interval(1, self._tick_clock)
-        self._start_all()
+        # Throttled table renders: ~2 Hz to avoid thrashing on WS ticks
+        self.set_interval(0.5, self._flush_tables)
 
-    @work(thread=False)
-    async def _start_all(self) -> None:
         await self._load_initial()
         self._spawn_streams()
 
@@ -236,13 +268,14 @@ class PolyTerminal(App):
                 pass
 
     async def _fetch_kalshi(self) -> None:
-        if not self.kalshi:
-            return
         try:
-            markets = await self.kalshi.get_markets(limit=100)
+            if self.kalshi:
+                markets = await self.kalshi.get_markets(limit=100)
+            else:
+                markets = await get_public_kalshi_markets(limit=100)
             for m in markets:
-                ticker = m.get("ticker", "")
-                title  = m.get("title") or ticker
+                ticker  = m.get("ticker", "")
+                title   = m.get("title") or ticker
                 yes_bid = m.get("yes_bid") or 0
                 yes_ask = m.get("yes_ask") or 0
                 price   = ((yes_bid + yes_ask) / 2 / 100) if (yes_bid or yes_ask) else 0
@@ -256,20 +289,23 @@ class PolyTerminal(App):
         try:
             markets = await self.poly.get_markets(limit=100)
             self._p_tokens = []
+            self._p_token_to_mid.clear()
             for m in markets:
                 mid      = str(m.get("id") or m.get("conditionId", ""))
                 question = m.get("question") or "—"
-                # price from outcomePrices
-                raw = m.get("outcomePrices", [])
+                raw      = m.get("outcomePrices", [])
                 if isinstance(raw, str):
-                    try: raw = json.loads(raw)
-                    except Exception: raw = []
-                price = float(raw[0]) if isinstance(raw, list) and raw else 0
+                    try:
+                        raw = json.loads(raw)
+                    except Exception:
+                        raw = []
+                price  = float(raw[0]) if isinstance(raw, list) and raw else 0
                 volume = float(m.get("volume", 0) or 0)
                 self._p_data[mid] = {"question": question, "price": price, "volume": volume}
-                # collect token_ids for WS subscription
                 for tid in (m.get("clobTokenIds") or []):
-                    self._p_tokens.append(str(tid))
+                    tid_str = str(tid)
+                    self._p_tokens.append(tid_str)
+                    self._p_token_to_mid[tid_str] = mid
             self._log(f"Loaded [green]{len(markets)}[/] Polymarket markets")
         except Exception as e:
             self._log(f"[red]Polymarket fetch error:[/] {e}")
@@ -278,27 +314,33 @@ class PolyTerminal(App):
 
     def _spawn_streams(self) -> None:
         if self.kalshi:
-            t1 = asyncio.create_task(self.kalshi.stream(self._on_k_ws, self._on_k_status))
-            self._tasks.append(t1)
-        t2 = asyncio.create_task(
-            self.poly.stream(self._p_tokens, self._on_p_ws, self._on_p_status)
+            self._tasks.append(
+                asyncio.create_task(self.kalshi.stream(self._on_k_ws, self._on_k_status, log_cb=self._log))
+            )
+        else:
+            self._log("[dim]Skipping Kalshi WS: authenticated client unavailable.[/]")
+        self._tasks.append(
+            asyncio.create_task(self.poly.stream(self._p_tokens, self._on_p_ws, self._on_p_status, log_cb=self._log))
         )
-        self._tasks.append(t2)
+
+    async def _cancel_streams(self) -> None:
+        for t in self._tasks:
+            t.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
 
     async def _on_k_ws(self, ticker: str, price: float) -> None:
         if ticker in self._k_data:
             self._k_data[ticker]["price"] = price
         else:
             self._k_data[ticker] = {"title": ticker, "price": price, "volume": 0}
-        self.call_from_thread(self._render_k_table) if False else self._render_k_table()
+        self._k_dirty = True
 
     async def _on_p_ws(self, token_id: str, price: float) -> None:
-        # Match token to market
-        for mid, info in self._p_data.items():
-            if token_id == mid:
-                self._p_data[mid]["price"] = price
-                self._render_p_table()
-                return
+        mid = self._p_token_to_mid.get(token_id)
+        if mid and mid in self._p_data:
+            self._p_data[mid]["price"] = price
+            self._p_dirty = True
 
     async def _on_k_status(self, status: str) -> None:
         lbl = self.query_one("#k-status", Label)
@@ -318,23 +360,59 @@ class PolyTerminal(App):
             lbl.update("P: ○ OFF")
             lbl.add_class("offline")
 
+    # ── Throttled table flush ─────────────────────────────────────────────────
+
+    def _flush_tables(self) -> None:
+        """Called at 2 Hz. Only re-renders tables that have pending updates."""
+        if self._k_dirty:
+            self._k_dirty = False
+            self._render_k_table()
+        if self._p_dirty:
+            self._p_dirty = False
+            self._render_p_table()
+
     # ── Table rendering ───────────────────────────────────────────────────────
+
+    def _matches_filter(self, text: str) -> bool:
+        keywords = FILTER_KEYWORDS.get(self._filter, [])
+        if not keywords:
+            return True  # "all" — show everything
+        tl = text.lower()
+        return any(kw in tl for kw in keywords)
 
     def _render_k_table(self) -> None:
         try:
             table = self.query_one("#k-table", DataTable)
             table.clear()
-            rows = sorted(self._k_data.items(), key=lambda x: -x[1]["volume"])
-            for ticker, info in rows[:80]:
-                price = info["price"]
-                vol   = info["volume"]
+            rows = sorted(self._k_data.items(), key=lambda x: (-x[1]["volume"], x[0]))
+            grouped = build_grouped_markets(rows, "title")
+            last_group = None
+            shown = 0
+            group_index = 0
+            for market in grouped:
+                if not self._matches_filter(market.title):
+                    continue
+                if market.group != last_group:
+                    group_index += 1
+                    table.add_row(
+                        "",
+                        f"[{market.group[:34]}]",
+                        "",
+                        "",
+                        key=f"k-group-{group_index}",
+                    )
+                    last_group = market.group
+
                 table.add_row(
-                    ticker[:20],
-                    (info["title"] or ticker)[:38],
-                    f"{price:.2f}" if price else "—",
-                    f"{vol:,}",
-                    key=ticker,
+                    market.market_id[:20],
+                    f"  {market.title[:36]}",
+                    f"{market.price:.2f}" if market.price else "—",
+                    f"{int(market.volume):,}",
+                    key=market.market_id,
                 )
+                shown += 1
+                if shown >= 80:
+                    break
         except Exception:
             pass
 
@@ -342,16 +420,33 @@ class PolyTerminal(App):
         try:
             table = self.query_one("#p-table", DataTable)
             table.clear()
-            rows = sorted(self._p_data.items(), key=lambda x: -x[1]["volume"])
-            for mid, info in rows[:80]:
-                price = info["price"]
-                vol   = info["volume"]
+            rows = sorted(self._p_data.items(), key=lambda x: (-x[1]["volume"], x[0]))
+            grouped = build_grouped_markets(rows, "question")
+            last_group = None
+            shown = 0
+            group_index = 0
+            for market in grouped:
+                if not self._matches_filter(market.title):
+                    continue
+                if market.group != last_group:
+                    group_index += 1
+                    table.add_row(
+                        f"[{market.group[:53]}]",
+                        "",
+                        "",
+                        key=f"p-group-{group_index}",
+                    )
+                    last_group = market.group
+
                 table.add_row(
-                    (info["question"] or mid)[:55],
-                    f"{price:.2f}" if price else "—",
-                    f"{int(vol):,}",
-                    key=mid,
+                    f"  {market.title[:53]}",
+                    f"{market.price:.2f}" if market.price else "—",
+                    f"{int(market.volume):,}",
+                    key=market.market_id,
                 )
+                shown += 1
+                if shown >= 80:
+                    break
         except Exception:
             pass
 
@@ -377,9 +472,14 @@ class PolyTerminal(App):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     async def action_refresh(self) -> None:
+        self._log("[dim]Restarting streams and refreshing data…[/]")
+        await self._cancel_streams()
         self._k_data.clear()
         self._p_data.clear()
+        self._p_token_to_mid.clear()
+        self._p_tokens.clear()
         await self._load_initial()
+        self._spawn_streams()
 
     async def action_filter(self, category: str) -> None:
         self._filter = category
@@ -388,6 +488,9 @@ class PolyTerminal(App):
         except Exception:
             pass
         self._log(f"Filter: [yellow]{category}[/]")
+        # Re-render both tables immediately with new filter
+        self._render_k_table()
+        self._render_p_table()
 
     def action_focus_cmd(self) -> None:
         self.query_one("#cmd-input", Input).focus()
@@ -406,7 +509,7 @@ class PolyTerminal(App):
         if text.startswith("/"):
             await self._cmd(text)
         else:
-            asyncio.create_task(self._ask_agent(text))
+            self._ask_agent(text)  # calls @work method — Textual manages the task
 
     async def _cmd(self, raw: str) -> None:
         cmd = raw.split()[0].lower()
@@ -424,11 +527,29 @@ class PolyTerminal(App):
         elif cmd == "/refresh":
             await self.action_refresh()
         elif cmd == "/spreads":
-            both = [
-                (t, d) for t, d in self._k_data.items()
-                if any(t.lower() in q["question"].lower() for q in self._p_data.values())
-            ]
-            self._log(f"[yellow]{len(both)}[/] potential cross-platform matches.")
+            matches = find_cross_platform_matches(self._k_data, self._p_data)
+            k_groups = summarize_groups(list(self._k_data.items()), "title")
+            p_groups = summarize_groups(list(self._p_data.items()), "question")
+            shared_groups = sorted(set(k_groups) & set(p_groups))
+            if shared_groups:
+                self._log(f"[green]{len(shared_groups)}[/] cross-platform event groups:")
+                for group_key in shared_groups[:10]:
+                    self._log(
+                        f"  {k_groups[group_key]['label']} | "
+                        f"K {k_groups[group_key]['count']} markets / "
+                        f"P {p_groups[group_key]['count']} markets"
+                    )
+            if not matches:
+                self._log("[yellow]0[/] high-confidence cross-platform matches.")
+                return
+
+            self._log(f"[yellow]{len(matches)}[/] high-confidence cross-platform matches:")
+            for match in matches[:10]:
+                self._log(
+                    f"  {match.kalshi_ticker} <-> {match.poly_question[:44]} | "
+                    f"spread [green]{match.spread:.3f}[/] | "
+                    f"score [cyan]{match.score:.2f}[/]"
+                )
         elif cmd == "/balance":
             if self.kalshi:
                 try:
@@ -445,7 +566,9 @@ class PolyTerminal(App):
         else:
             self._log(f"[red]Unknown:[/] {cmd}  (try /help)")
 
+    @work(exclusive=False)
     async def _ask_agent(self, question: str) -> None:
+        """Send a question to Clawdbot via OpenRouter. Runs as a Textual worker."""
         if not OPENROUTER_KEY:
             self._log("[red]OPENROUTER_API_KEY not set in .env[/]")
             return
@@ -476,23 +599,24 @@ class PolyTerminal(App):
                         "model":      OPENROUTER_MODEL,
                         "max_tokens": 512,
                         "messages": [
-                            {"role": "system",  "content": system},
-                            {"role": "user",    "content": question},
+                            {"role": "system", "content": system},
+                            {"role": "user",   "content": question},
                         ],
                     },
                 )
                 r.raise_for_status()
-                reply = r.json()["choices"][0]["message"]["content"]
+                data  = r.json()
+                reply = data["choices"][0]["message"]["content"]
             self._log(f"[magenta]Clawdbot:[/] {reply}")
+        except httpx.HTTPStatusError as e:
+            self._log(f"[red]Clawdbot API error {e.response.status_code}:[/] {e.response.text[:200]}")
         except Exception as e:
-            self._log(f"[red]Agent error:[/] {e}")
+            self._log(f"[red]Clawdbot error:[/] {e}")
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     async def on_unmount(self) -> None:
-        for t in self._tasks:
-            t.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self._cancel_streams()
 
 
 # ── Entry ──────────────────────────────────────────────────────────────────────
