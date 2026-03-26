@@ -83,7 +83,7 @@ class KalshiClient:
         Open Kalshi WebSocket and call on_msg(ticker, yes_price) on each update.
         Reconnects automatically on disconnect. Calls on_status("connected"/"disconnected").
         """
-        def _log(msg: str):
+        def _log(msg: str): 
             if log_cb: log_cb(msg)
             else: log.info(msg)
 
